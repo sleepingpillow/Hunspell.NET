@@ -52,6 +52,9 @@ internal sealed class AffixManager : IDisposable
     // Break points (BREAK)
     private readonly List<string> _breakPoints = new();
 
+    // REP table (replacement patterns)
+    private readonly List<(string from, string to)> _repTable = new();
+
     public string Encoding => _options.TryGetValue("SET", out var encoding) ? encoding : "UTF-8";
 
     public AffixManager(string affixPath, HashManager hashManager)
@@ -279,13 +282,28 @@ internal sealed class AffixManager : IDisposable
                 break;
 
             case "KEY":
-            case "REP":
             case "MAP":
             case "WORDCHARS":
                 // Store for potential future use
                 if (parts.Length > 1)
                 {
                     _options[command] = string.Join(" ", parts[1..]);
+                }
+                break;
+
+            case "REP":
+                if (parts.Length > 1)
+                {
+                    // First line contains the count, subsequent lines contain patterns
+                    if (int.TryParse(parts[1], out _))
+                    {
+                        // This is the count line, ignore it
+                    }
+                    else if (parts.Length >= 3)
+                    {
+                        // This is a replacement pattern: REP from to
+                        _repTable.Add((parts[1], parts[2]));
+                    }
                 }
                 break;
         }
@@ -439,7 +457,16 @@ internal sealed class AffixManager : IDisposable
         // If COMPOUNDRULE is defined, use it for compound checking
         if (_compoundRules.Count > 0)
         {
-            return CheckCompoundWithRules(word);
+            bool isValid = CheckCompoundWithRules(word);
+            if (isValid && _checkCompoundRep)
+            {
+                // Check if this compound matches a dictionary word via REP replacements
+                if (CheckCompoundRep(word))
+                {
+                    return false; // Forbid compound if it matches via REP
+                }
+            }
+            return isValid;
         }
 
         // Otherwise, use flag-based compound checking
@@ -450,7 +477,39 @@ internal sealed class AffixManager : IDisposable
         }
 
         // Try to split the word into valid compound parts
-        return CheckCompoundRecursive(word, 0, 0, null, 0);
+        bool result = CheckCompoundRecursive(word, 0, 0, null, 0);
+        
+        if (result && _checkCompoundRep)
+        {
+            // Check if this compound matches a dictionary word via REP replacements
+            if (CheckCompoundRep(word))
+            {
+                return false; // Forbid compound if it matches via REP
+            }
+        }
+        
+        return result;
+    }
+
+    /// <summary>
+    /// Check if a compound word would match a dictionary word via REP replacements.
+    /// </summary>
+    private bool CheckCompoundRep(string word)
+    {
+        // For each REP rule, apply it to the word and check if result is in dictionary
+        foreach (var (from, to) in _repTable)
+        {
+            if (word.Contains(from))
+            {
+                var modified = word.Replace(from, to);
+                if (_hashManager.Lookup(modified))
+                {
+                    // This compound matches a dictionary word via REP replacement
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /// <summary>

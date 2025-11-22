@@ -198,7 +198,8 @@ Allow twofold suffixes within compounds (currently parsed but not implemented).
 #### 6. CHECKCOMPOUNDREP (Full Implementation)
 **Complexity:** Medium  
 **Impact:** Low-Medium  
-**Estimated Effort:** 1-2 days
+**Estimated Effort:** 1-2 days  
+**Status:** ✅ **IMPLEMENTED** (basic form)
 
 Forbid compounds that might be non-compounds with REP (replacement) faults (currently parsed but not implemented).
 
@@ -207,12 +208,16 @@ Forbid compounds that might be non-compounds with REP (replacement) faults (curr
 CHECKCOMPOUNDREP
 ```
 
-**Implementation needs:**
-- REP table parsing (if not already done)
-- Check if compound could be non-compound with REP substitution
-- Integration with compound validation
+**Implementation details:**
+- ✅ REP table parsing from affix file
+- ✅ Check if compound matches dictionary word via REP substitution
+- ⚠️ Full recursive checking (compounds containing forbidden parts) not yet implemented
 
-**Test files in Hunspell:** ~4 test files (`checkcompoundrep*.{aff,dic,good,wrong}`)
+**Known limitations:**
+- Only checks the compound word itself, not recursively checking if compound parts are forbidden
+- Example: "szervíz" (matches "szerviz" via REP) is forbidden, but "szervízkocsi" (containing "szervíz") is not yet caught
+
+**Test coverage:** 3 tests covering basic REP matching and dictionary word validation
 
 **Why Priority 3:** Specific to languages with "compound-friendly" orthography. Lower priority than core features.
 

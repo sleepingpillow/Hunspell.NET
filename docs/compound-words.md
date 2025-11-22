@@ -96,7 +96,7 @@ Allow simplified 2-letter forms of the compounds forbidden by CHECKCOMPOUNDTRIPL
 ### CHECKCOMPOUNDREP
 Forbid compounding, if the compound word may be a non-compound word with a REP fault. Useful for languages with 'compound friendly' orthography.
 
-**Status:** ⚠️ Parsed but not yet fully implemented
+**Status:** ✅ Implemented (basic form - checks if compound matches dictionary word via REP, recursive checking pending)
 
 ### CHECKCOMPOUNDPATTERN number_of_definitions
 ### CHECKCOMPOUNDPATTERN endchars[/flag] beginchars[/flag] [replacement]
