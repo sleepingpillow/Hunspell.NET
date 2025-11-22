@@ -107,7 +107,7 @@ Forbid compounding, if the first word in the compound ends with endchars, and th
 ### COMPOUNDSYLLABLE max_syllable vowels
 Limit compound words by maximum syllable count. Primarily used for Hungarian.
 
-**Status:** ❌ Not yet implemented (See [remaining plan](compound-words-remaining.md) - Priority 2)
+**Status:** ✅ Implemented (allows exceeding COMPOUNDWORDMAX if syllable count is within limit)
 
 ## Advanced Features
 

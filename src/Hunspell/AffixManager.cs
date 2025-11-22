@@ -31,6 +31,10 @@ internal sealed class AffixManager : IDisposable
     private int _compoundMin = 3;
     private int _compoundWordMax = 0; // 0 means unlimited
     private bool _compoundMoreSuffixes = false;
+    
+    // Compound syllable options (COMPOUNDSYLLABLE)
+    private int _compoundSyllableMax = 0; // 0 means no syllable limit
+    private string _compoundSyllableVowels = string.Empty;
 
     // Compound checking options
     private bool _checkCompoundDup = false;
@@ -185,6 +189,17 @@ internal sealed class AffixManager : IDisposable
 
             case "COMPOUNDMORESUFFIXES":
                 _compoundMoreSuffixes = true;
+                break;
+
+            case "COMPOUNDSYLLABLE":
+                if (parts.Length > 2)
+                {
+                    if (int.TryParse(parts[1], out var syllableMax))
+                    {
+                        _compoundSyllableMax = syllableMax;
+                        _compoundSyllableVowels = parts[2];
+                    }
+                }
                 break;
 
             // Compound checking options
@@ -416,7 +431,7 @@ internal sealed class AffixManager : IDisposable
         }
 
         // Try to split the word into valid compound parts
-        return CheckCompoundRecursive(word, 0, 0, null);
+        return CheckCompoundRecursive(word, 0, 0, null, 0);
     }
 
     /// <summary>
@@ -606,15 +621,24 @@ internal sealed class AffixManager : IDisposable
     /// <summary>
     /// Recursively check if a word can be split into valid compound parts.
     /// </summary>
-    private bool CheckCompoundRecursive(string word, int wordCount, int position, string? previousPart)
+    private bool CheckCompoundRecursive(string word, int wordCount, int position, string? previousPart, int syllableCount)
     {
         // If we've consumed the entire word, we have a valid compound
         if (position >= word.Length)
         {
             // Check if we're within the maximum word count limit
+            // Exception: if syllable limit is set and we're within it, allow more words
             if (_compoundWordMax > 0 && wordCount > _compoundWordMax)
             {
-                return false;
+                // Check if syllable exception applies
+                if (_compoundSyllableMax > 0 && syllableCount <= _compoundSyllableMax)
+                {
+                    // Syllable limit allows this compound despite word count
+                }
+                else
+                {
+                    return false;
+                }
             }
             return wordCount >= 2; // Must have at least 2 parts to be a compound
         }
@@ -622,7 +646,12 @@ internal sealed class AffixManager : IDisposable
         // Check if adding another word would exceed the maximum
         if (_compoundWordMax > 0 && wordCount + 1 > _compoundWordMax)
         {
-            return false;
+            // Check if syllable exception could still apply
+            if (_compoundSyllableMax == 0)
+            {
+                return false; // No syllable exception available
+            }
+            // Continue - might still be valid if syllable count is low enough
         }
 
         // Try different split positions
@@ -642,8 +671,11 @@ internal sealed class AffixManager : IDisposable
                 continue;
             }
 
+            // Count syllables in this part
+            int partSyllables = CountSyllables(part);
+
             // Try to continue building the compound
-            if (CheckCompoundRecursive(word, wordCount + 1, i, part))
+            if (CheckCompoundRecursive(word, wordCount + 1, i, part, syllableCount + partSyllables))
             {
                 return true;
             }
@@ -831,6 +863,27 @@ internal sealed class AffixManager : IDisposable
 
         var flags = _hashManager.GetWordFlags(word);
         return flags is not null && flags.Contains(_onlyInCompound);
+    }
+
+    /// <summary>
+    /// Count syllables in a word based on vowel characters.
+    /// </summary>
+    private int CountSyllables(string word)
+    {
+        if (string.IsNullOrEmpty(_compoundSyllableVowels))
+        {
+            return 0;
+        }
+
+        int count = 0;
+        foreach (char c in word)
+        {
+            if (_compoundSyllableVowels.Contains(c))
+            {
+                count++;
+            }
+        }
+        return count;
     }
 
     public void Dispose()
