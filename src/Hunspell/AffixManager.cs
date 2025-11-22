@@ -27,6 +27,12 @@ internal sealed class AffixManager : IDisposable
     private string? _compoundForbidFlag;
     private string? _onlyInCompound;
 
+    // Word attribute flags
+    private string? _noSuggestFlag;
+    private string? _forbiddenWordFlag;
+    private string? _needAffixFlag;
+    private string? _forceUCaseFlag;
+
     // Compound word options
     private int _compoundMin = 3;
     private int _compoundWordMax = 0; // 0 means unlimited
@@ -42,6 +48,13 @@ internal sealed class AffixManager : IDisposable
     private bool _checkCompoundTriple = false;
     private bool _simplifiedTriple = false;
     private bool _checkCompoundRep = false;
+
+    // Suggestion options
+    private int _maxCompoundSuggestions = 0; // 0 means unlimited
+    private int _maxDiff = 0; // 0 means unlimited
+    private bool _onlyMaxDiff = false;
+    private bool _noSplitSuggestions = false;
+    private bool _fullStrip = false;
 
     // Compound rules (COMPOUNDRULE)
     private readonly List<string> _compoundRules = new();
@@ -308,6 +321,62 @@ internal sealed class AffixManager : IDisposable
                         _repTable.Add((parts[1], parts[2]));
                     }
                 }
+                break;
+
+            // Word attribute flags
+            case "NOSUGGEST":
+                if (parts.Length > 1)
+                {
+                    _noSuggestFlag = parts[1];
+                }
+                break;
+
+            case "FORBIDDENWORD":
+                if (parts.Length > 1)
+                {
+                    _forbiddenWordFlag = parts[1];
+                }
+                break;
+
+            case "NEEDAFFIX":
+                if (parts.Length > 1)
+                {
+                    _needAffixFlag = parts[1];
+                }
+                break;
+
+            case "FORCEUCASE":
+                if (parts.Length > 1)
+                {
+                    _forceUCaseFlag = parts[1];
+                }
+                break;
+
+            // Suggestion options
+            case "MAXCPDSUGS":
+                if (parts.Length > 1 && int.TryParse(parts[1], out var maxCpdSugs))
+                {
+                    _maxCompoundSuggestions = maxCpdSugs;
+                }
+                break;
+
+            case "MAXDIFF":
+                if (parts.Length > 1 && int.TryParse(parts[1], out var maxDiff))
+                {
+                    _maxDiff = maxDiff;
+                }
+                break;
+
+            case "ONLYMAXDIFF":
+                _onlyMaxDiff = true;
+                break;
+
+            case "NOSPLITSUGS":
+                _noSplitSuggestions = true;
+                break;
+
+            case "FULLSTRIP":
+                _fullStrip = true;
                 break;
         }
     }
