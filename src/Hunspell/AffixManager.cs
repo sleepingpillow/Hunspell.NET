@@ -49,6 +49,9 @@ internal sealed class AffixManager : IDisposable
     // Compound pattern checking (CHECKCOMPOUNDPATTERN)
     private readonly List<CompoundPattern> _compoundPatterns = new();
 
+    // Break points (BREAK)
+    private readonly List<string> _breakPoints = new();
+
     public string Encoding => _options.TryGetValue("SET", out var encoding) ? encoding : "UTF-8";
 
     public AffixManager(string affixPath, HashManager hashManager)
@@ -255,6 +258,22 @@ internal sealed class AffixManager : IDisposable
                         var replacement = parts.Length > 3 ? parts[3] : null;
                         
                         _compoundPatterns.Add(new CompoundPattern(endChars, endFlag, beginChars, beginFlag, replacement));
+                    }
+                }
+                break;
+
+            case "BREAK":
+                if (parts.Length > 1)
+                {
+                    // First line contains the count, subsequent lines contain break strings
+                    if (int.TryParse(parts[1], out _))
+                    {
+                        // This is the count line, ignore it
+                    }
+                    else
+                    {
+                        // This is a break string
+                        _breakPoints.Add(parts[1]);
                     }
                 }
                 break;
@@ -884,6 +903,61 @@ internal sealed class AffixManager : IDisposable
             }
         }
         return count;
+    }
+
+    /// <summary>
+    /// Check if a word can be broken at break points with all parts being valid.
+    /// </summary>
+    public bool CheckBreak(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        // If no break points defined, no break checking
+        if (_breakPoints.Count == 0)
+        {
+            return false;
+        }
+
+        // Try to break the word at each break point
+        return CheckBreakRecursive(word);
+    }
+
+    /// <summary>
+    /// Recursively check if a word can be broken into valid parts.
+    /// </summary>
+    private bool CheckBreakRecursive(string word)
+    {
+        // Empty word is not valid
+        if (string.IsNullOrEmpty(word))
+        {
+            return false;
+        }
+
+        // Check if the whole word is valid
+        if (_hashManager.Lookup(word) && !IsOnlyInCompound(word))
+        {
+            return true;
+        }
+
+        // Try breaking at each break point
+        foreach (var breakPoint in _breakPoints)
+        {
+            int index = word.IndexOf(breakPoint);
+            if (index > 0 && index < word.Length - breakPoint.Length)
+            {
+                // Break the word into parts
+                var before = word.Substring(0, index);
+                var after = word.Substring(index + breakPoint.Length);
+
+                // Both parts must be valid (recursively)
+                if (CheckBreakRecursive(before) && CheckBreakRecursive(after))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     public void Dispose()

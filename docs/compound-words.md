@@ -121,7 +121,7 @@ Define custom compound patterns with a regex-like syntax. Compound patterns cons
 ### BREAK character_or_character_sequence
 Define break points for breaking words and checking word parts separately. Useful for compounding with joining characters (hyphens, etc.).
 
-**Status:** ❌ Not yet implemented (See [remaining plan](compound-words-remaining.md) - Priority 2)
+**Status:** ✅ Implemented (recursive breaking, independent part validation)
 
 ## Examples
 

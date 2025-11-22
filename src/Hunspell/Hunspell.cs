@@ -59,6 +59,12 @@ public sealed class HunspellSpellChecker : IDisposable
             return true;
         }
 
+        // Check if word can be broken at break points and all parts are valid
+        if (_affixManager?.CheckBreak(word) ?? false)
+        {
+            return true;
+        }
+
         // If not found, check if it's a valid compound word
         return _affixManager?.CheckCompound(word) ?? false;
     }
