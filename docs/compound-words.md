@@ -102,7 +102,7 @@ Forbid compounding, if the compound word may be a non-compound word with a REP f
 ### CHECKCOMPOUNDPATTERN endchars[/flag] beginchars[/flag] [replacement]
 Forbid compounding, if the first word in the compound ends with endchars, and the second word begins with beginchars, and optionally use replacement instead.
 
-**Status:** ❌ Not yet implemented (See [remaining plan](compound-words-remaining.md) - Priority 1)
+**Status:** ✅ Implemented (forbids patterns at boundaries, flag checking supported)
 
 ### COMPOUNDSYLLABLE max_syllable vowels
 Limit compound words by maximum syllable count. Primarily used for Hungarian.
@@ -282,6 +282,41 @@ spellChecker.Spell("aa");     // true - A* (2 A's)
 spellChecker.Spell("abc");    // true - A*B*C*
 spellChecker.Spell("aabbcc"); // true - multiple of each
 spellChecker.Spell("ba");     // false - wrong order
+```
+
+### CHECKCOMPOUNDPATTERN (Boundary Patterns)
+
+**Affix file (checkcompoundpattern.aff):**
+```
+COMPOUNDFLAG A
+CHECKCOMPOUNDPATTERN 2
+CHECKCOMPOUNDPATTERN oo e
+CHECKCOMPOUNDPATTERN ss s
+```
+
+**Dictionary file (checkcompoundpattern.dic):**
+```
+5
+foo/A
+bar/A
+boss/A
+set/A
+eat/A
+```
+
+**Usage:**
+```csharp
+using var spellChecker = new HunspellSpellChecker("checkcompoundpattern.aff", "checkcompoundpattern.dic");
+
+// Valid - doesn't match forbidden patterns
+spellChecker.Spell("foobar");  // true - foo + bar (no forbidden pattern)
+spellChecker.Spell("barfoo");  // true - bar + foo (no forbidden pattern)
+
+// Invalid - matches forbidden pattern "oo e"
+spellChecker.Spell("fooeat");  // false - foo (ends with "oo") + eat (starts with "e")
+
+// Invalid - matches forbidden pattern "ss s"
+spellChecker.Spell("bossset"); // false - boss (ends with "ss") + set (starts with "s")
 ```
 
 ## Implementation Notes

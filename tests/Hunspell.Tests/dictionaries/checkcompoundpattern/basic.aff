@@ -1,0 +1,5 @@
+# Forbid compounds with specific pattern at word bounds
+COMPOUNDFLAG A
+CHECKCOMPOUNDPATTERN 2
+CHECKCOMPOUNDPATTERN oo e
+CHECKCOMPOUNDPATTERN ss s

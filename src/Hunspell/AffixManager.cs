@@ -42,6 +42,9 @@ internal sealed class AffixManager : IDisposable
     // Compound rules (COMPOUNDRULE)
     private readonly List<string> _compoundRules = new();
 
+    // Compound pattern checking (CHECKCOMPOUNDPATTERN)
+    private readonly List<CompoundPattern> _compoundPatterns = new();
+
     public string Encoding => _options.TryGetValue("SET", out var encoding) ? encoding : "UTF-8";
 
     public AffixManager(string affixPath, HashManager hashManager)
@@ -221,6 +224,26 @@ internal sealed class AffixManager : IDisposable
                 }
                 break;
 
+            case "CHECKCOMPOUNDPATTERN":
+                if (parts.Length > 1)
+                {
+                    // First line contains the count, subsequent lines contain patterns
+                    if (int.TryParse(parts[1], out _))
+                    {
+                        // This is the count line, ignore it
+                    }
+                    else if (parts.Length >= 3)
+                    {
+                        // Parse pattern: endchars[/flag] beginchars[/flag] [replacement]
+                        var (endChars, endFlag) = ParseFlaggedPart(parts[1]);
+                        var (beginChars, beginFlag) = ParseFlaggedPart(parts[2]);
+                        var replacement = parts.Length > 3 ? parts[3] : null;
+                        
+                        _compoundPatterns.Add(new CompoundPattern(endChars, endFlag, beginChars, beginFlag, replacement));
+                    }
+                }
+                break;
+
             case "KEY":
             case "REP":
             case "MAP":
@@ -259,6 +282,19 @@ internal sealed class AffixManager : IDisposable
         {
             _suffixes.Add(rule);
         }
+    }
+
+    /// <summary>
+    /// Parse a part that may contain a flag (e.g., "chars/flag" or just "chars").
+    /// </summary>
+    private (string chars, string? flag) ParseFlaggedPart(string part)
+    {
+        var slashIndex = part.IndexOf('/');
+        if (slashIndex > 0)
+        {
+            return (part.Substring(0, slashIndex), part.Substring(slashIndex + 1));
+        }
+        return (part, null);
     }
 
     public void GenerateSuggestions(string word, List<string> suggestions)
@@ -726,6 +762,58 @@ internal sealed class AffixManager : IDisposable
             }
         }
 
+        // Check CHECKCOMPOUNDPATTERN - forbid specific patterns at boundaries
+        if (_compoundPatterns.Count > 0 && previousPart is not null)
+        {
+            foreach (var pattern in _compoundPatterns)
+            {
+                if (CheckCompoundPatternMatch(previousPart, currentPart, pattern))
+                {
+                    return false; // Pattern matched, forbid this compound
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Check if a compound boundary matches a forbidden pattern.
+    /// </summary>
+    private bool CheckCompoundPatternMatch(string prevPart, string currentPart, CompoundPattern pattern)
+    {
+        // Check if the previous part ends with the pattern's end chars
+        if (!prevPart.EndsWith(pattern.EndChars, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // Check if the current part begins with the pattern's begin chars
+        if (!currentPart.StartsWith(pattern.BeginChars, StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // If flags are specified, check them
+        if (pattern.EndFlag is not null)
+        {
+            var prevFlags = _hashManager.GetWordFlags(prevPart);
+            if (prevFlags is null || !prevFlags.Contains(pattern.EndFlag))
+            {
+                return false;
+            }
+        }
+
+        if (pattern.BeginFlag is not null)
+        {
+            var currentFlags = _hashManager.GetWordFlags(currentPart);
+            if (currentFlags is null || !currentFlags.Contains(pattern.BeginFlag))
+            {
+                return false;
+            }
+        }
+
+        // Pattern matched - this boundary is forbidden
         return true;
     }
 
@@ -757,4 +845,9 @@ internal sealed class AffixManager : IDisposable
     }
 
     private record AffixRule(string Flag, string Stripping, string Affix, string Condition, bool IsPrefix);
+    
+    /// <summary>
+    /// Represents a CHECKCOMPOUNDPATTERN rule.
+    /// </summary>
+    private record CompoundPattern(string EndChars, string? EndFlag, string BeginChars, string? BeginFlag, string? Replacement);
 }
