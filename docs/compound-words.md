@@ -8,7 +8,9 @@ Compound words are words formed by combining two or more words together. Many la
 
 ## Status
 
-This feature is currently under development. This document will be updated as features are implemented.
+✅ **Phase 1 Complete:** Core compound word support is implemented and tested (19 tests).
+
+See [compound-words-remaining.md](compound-words-remaining.md) for a detailed plan of remaining features to implement.
 
 ## Compound Word Flags
 
@@ -100,7 +102,12 @@ Forbid compounding, if the compound word may be a non-compound word with a REP f
 ### CHECKCOMPOUNDPATTERN endchars[/flag] beginchars[/flag] [replacement]
 Forbid compounding, if the first word in the compound ends with endchars, and the second word begins with beginchars, and optionally use replacement instead.
 
-**Status:** ❌ Not yet implemented (future enhancement)
+**Status:** ❌ Not yet implemented (See [remaining plan](compound-words-remaining.md) - Priority 1)
+
+### COMPOUNDSYLLABLE max_syllable vowels
+Limit compound words by maximum syllable count. Primarily used for Hungarian.
+
+**Status:** ❌ Not yet implemented (See [remaining plan](compound-words-remaining.md) - Priority 2)
 
 ## Advanced Features
 
@@ -108,13 +115,13 @@ Forbid compounding, if the first word in the compound ends with endchars, and th
 ### COMPOUNDRULE compound_pattern
 Define custom compound patterns with a regex-like syntax. Compound patterns consist of compound flags, parentheses, star and question mark meta characters.
 
-**Status:** Not yet implemented (future enhancement)
+**Status:** ❌ Not yet implemented (See [remaining plan](compound-words-remaining.md) - Priority 1, High Impact)
 
 ### BREAK number_of_definitions
 ### BREAK character_or_character_sequence
 Define break points for breaking words and checking word parts separately. Useful for compounding with joining characters (hyphens, etc.).
 
-**Status:** Not yet implemented (future enhancement)
+**Status:** ❌ Not yet implemented (See [remaining plan](compound-words-remaining.md) - Priority 2)
 
 ## Examples
 

@@ -12,6 +12,15 @@ Comprehensive guide to compound word support in Hunspell.NET, including:
 - Special flags (ONLYINCOMPOUND, COMPOUNDFORBIDFLAG, COMPOUNDPERMITFLAG)
 - Usage examples and implementation notes
 
+### [Remaining Compound Features Plan](compound-words-remaining.md)
+Detailed implementation plan for remaining compound word features:
+- COMPOUNDRULE (regex-like patterns) - Priority 1
+- CHECKCOMPOUNDPATTERN (boundary patterns) - Priority 1
+- COMPOUNDSYLLABLE (syllable limits) - Priority 2
+- BREAK (word breaking) - Priority 2
+- Enhanced affix support - Priority 3-4
+- Recommended implementation order and effort estimates
+
 ## Quick Links
 
 - [Main README](../README.md) - Project overview and quick start guide
