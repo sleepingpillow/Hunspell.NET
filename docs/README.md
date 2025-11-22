@@ -1,0 +1,23 @@
+# Hunspell.NET Documentation
+
+Welcome to the Hunspell.NET documentation. This directory contains detailed documentation for various features of the library.
+
+## Available Documentation
+
+### [Compound Words](compound-words.md)
+Comprehensive guide to compound word support in Hunspell.NET, including:
+- Compound word flags (COMPOUNDFLAG, COMPOUNDBEGIN, COMPOUNDMIDDLE, COMPOUNDEND)
+- Compound word options (COMPOUNDMIN, COMPOUNDWORDMAX)
+- Compound checking rules (CHECKCOMPOUNDDUP, CHECKCOMPOUNDCASE, CHECKCOMPOUNDTRIPLE)
+- Special flags (ONLYINCOMPOUND, COMPOUNDFORBIDFLAG, COMPOUNDPERMITFLAG)
+- Usage examples and implementation notes
+
+## Quick Links
+
+- [Main README](../README.md) - Project overview and quick start guide
+- [Compound Words Documentation](compound-words.md) - Detailed compound word feature documentation
+- [Tests](../tests/Hunspell.Tests/) - Test suite with usage examples
+
+## Contributing
+
+When adding new features, please update or create documentation in this directory to help users understand how to use them.
