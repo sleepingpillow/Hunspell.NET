@@ -55,6 +55,9 @@ internal sealed class AffixManager : IDisposable
     // REP table (replacement patterns)
     private readonly List<(string from, string to)> _repTable = new();
 
+    // Common suffixes for COMPOUNDMORESUFFIXES simplified implementation
+    private static readonly string[] CommonSuffixes = { "s", "es", "ed", "ing", "er", "est", "ly", "ness", "ment", "tion" };
+
     public string Encoding => _options.TryGetValue("SET", out var encoding) ? encoding : "UTF-8";
 
     public AffixManager(string affixPath, HashManager hashManager)
@@ -838,13 +841,12 @@ internal sealed class AffixManager : IDisposable
     {
         // Try stripping common English suffixes as a basic implementation
         // In a full implementation, this would use the actual affix rules
-        string[] commonSuffixes = { "s", "es", "ed", "ing", "er", "est", "ly", "ness", "ment", "tion" };
         
-        foreach (var suffix in commonSuffixes)
+        foreach (var suffix in CommonSuffixes)
         {
-            if (part.Length > suffix.Length + _compoundMin && part.EndsWith(suffix))
+            if (part.Length >= suffix.Length + _compoundMin && part.EndsWith(suffix))
             {
-                var basePart = part.Substring(0, part.Length - suffix.Length);
+                var basePart = part[..^suffix.Length];
                 var baseFlags = _hashManager.GetWordFlags(basePart);
                 
                 if (baseFlags is not null)
