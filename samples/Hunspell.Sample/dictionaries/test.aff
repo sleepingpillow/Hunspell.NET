@@ -1,0 +1,11 @@
+# Test affix file for Hunspell.NET
+SET UTF-8
+TRY esianrtolcdugmphbyfvkwzESIANRTOLCDUGMPHBYFVKWZ
+
+# Simple suffix rule for plurals
+SFX S Y 1
+SFX S 0 s .
+
+# Simple prefix rule for negative
+PFX N Y 1
+PFX N 0 un .
