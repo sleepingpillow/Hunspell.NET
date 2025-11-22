@@ -354,13 +354,13 @@ internal sealed class AffixManager : IDisposable
         }
 
         // Try to split the word into valid compound parts
-        return CheckCompoundRecursive(word, 0, 0);
+        return CheckCompoundRecursive(word, 0, 0, null);
     }
 
     /// <summary>
     /// Recursively check if a word can be split into valid compound parts.
     /// </summary>
-    private bool CheckCompoundRecursive(string word, int wordCount, int position)
+    private bool CheckCompoundRecursive(string word, int wordCount, int position, string? previousPart)
     {
         // If we've consumed the entire word, we have a valid compound
         if (position >= word.Length)
@@ -391,13 +391,13 @@ internal sealed class AffixManager : IDisposable
             }
 
             // Check compound-specific rules
-            if (!CheckCompoundRules(word, position, i))
+            if (!CheckCompoundRules(word, position, i, previousPart, part))
             {
                 continue;
             }
 
             // Try to continue building the compound
-            if (CheckCompoundRecursive(word, wordCount + 1, i))
+            if (CheckCompoundRecursive(word, wordCount + 1, i, part))
             {
                 return true;
             }
@@ -422,12 +422,6 @@ internal sealed class AffixManager : IDisposable
         if (flags is null)
         {
             return false; // Word not in dictionary
-        }
-
-        // Check ONLYINCOMPOUND - these words are only valid inside compounds, not standalone
-        if (_onlyInCompound is not null && flags.Contains(_onlyInCompound) && wordCount == 0 && endPos == fullWord.Length)
-        {
-            return false; // ONLYINCOMPOUND words can't be the only part
         }
 
         // Check position-specific flags
@@ -471,18 +465,16 @@ internal sealed class AffixManager : IDisposable
     /// <summary>
     /// Check compound-specific rules (dup, case, triple, etc.)
     /// </summary>
-    private bool CheckCompoundRules(string word, int prevEnd, int currentEnd)
+    private bool CheckCompoundRules(string word, int prevEnd, int currentEnd, string? previousPart, string currentPart)
     {
         if (prevEnd == 0)
         {
             return true; // No previous part to check against
         }
 
-        var prevPart = word.Substring(0, prevEnd);
-        var currentPart = word.Substring(prevEnd, currentEnd - prevEnd);
-
         // Check CHECKCOMPOUNDDUP - forbid duplicated words
-        if (_checkCompoundDup && prevPart.Equals(currentPart, StringComparison.OrdinalIgnoreCase))
+        if (_checkCompoundDup && previousPart is not null && 
+            previousPart.Equals(currentPart, StringComparison.OrdinalIgnoreCase))
         {
             return false;
         }

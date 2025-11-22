@@ -235,4 +235,17 @@ public class CompoundTests
         // Act & Assert - max is 2 words, so 3 words should be invalid
         Assert.False(spellChecker.Spell("foobarbaz"));
     }
+
+    [Fact]
+    public void CompoundDup_NonConsecutiveDuplicates_ShouldBeValid()
+    {
+        // Arrange
+        using var spellChecker = new HunspellSpellChecker(
+            "../../../dictionaries/compound/dup.aff",
+            "../../../dictionaries/compound/dup.dic");
+
+        // Act & Assert - CHECKCOMPOUNDDUP only checks consecutive parts
+        // "foo-bar-foo" should be valid because foo and foo are not consecutive
+        Assert.True(spellChecker.Spell("foobarfoo"));
+    }
 }
