@@ -177,21 +177,33 @@ BREAK n-
 
 ### Priority 3: Enhancement Features
 
-#### 5. COMPOUNDMORESUFFIXES (Full Implementation)
-**Complexity:** Medium  
+#### 5. COMPOUNDMORESUFFIXES (Implemented - Simplified)
+**Complexity:** High  
 **Impact:** Low-Medium  
-**Estimated Effort:** 1-2 days
+**Estimated Effort:** 1-2 days  
+**Status:** ✅ **IMPLEMENTED** (simplified version)
 
-Allow twofold suffixes within compounds (currently parsed but not implemented).
+Allow twofold suffixes within compounds (flag is parsed and basic suffix stripping is supported).
 
-**Implementation needs:**
-- Track suffix application count per compound part
-- Allow multiple suffixes on compound parts
-- Integration with existing affix system
+**Implementation details:**
+- ✅ Flag parsing from affix file
+- ✅ Basic suffix stripping for common English suffixes (-s, -es, -ed, -ing, -er, -est, -ly, -ness, -ment, -tion)
+- ✅ Integration with compound part validation
+- ⚠️ Full affix rule-based suffix stacking not yet implemented
 
-**Test files in Hunspell:** Tested as part of other compound tests
+**Current behavior:**
+- Attempts to strip common suffixes from compound parts that aren't in dictionary
+- Checks if the base form (after suffix removal) is valid for compounding
+- Respects compound position flags (BEGIN/MIDDLE/END) and COMPOUNDFORBIDFLAG
 
-**Why Priority 3:** Enhancement for complex morphology. Already parsed, just needs logic implementation.
+**Known limitations:**
+- Uses hardcoded common suffix list instead of full affix rules
+- Doesn't support multiple layers of suffix application
+- Full implementation would require deep integration with affix application system
+
+**Test coverage:** 4 tests covering basic compounds, suffix handling, and flag recognition
+
+**Why Priority 3:** Enhancement for complex morphology. Basic support implemented, full support requires substantial affix system refactoring.
 
 ---
 

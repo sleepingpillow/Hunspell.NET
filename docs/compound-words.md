@@ -67,9 +67,14 @@ Set maximum word count in a compound word. Default is unlimited.
 **Status:** ✅ Implemented
 
 ### COMPOUNDMORESUFFIXES
-Allow twofold suffixes within compounds.
+Allow twofold suffixes within compounds. This feature enables compound parts to have multiple suffixes applied, useful for languages with complex morphology.
 
-**Status:** ⚠️ Parsed but not yet fully implemented
+**Status:** ✅ Implemented (simplified version with common suffix stripping, full affix-rule-based implementation pending)
+
+**Current behavior:**
+- Strips common suffixes (-s, -es, -ed, -ing, -er, -est, -ly, -ness, -ment, -tion) from compound parts
+- Checks if base forms are valid for compounding
+- Example: "bookscase" (books + case) where "books" = "book" + "s" suffix
 
 ## Compound Checking Options
 

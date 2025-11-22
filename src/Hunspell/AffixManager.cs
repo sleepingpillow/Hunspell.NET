@@ -777,6 +777,12 @@ internal sealed class AffixManager : IDisposable
         var flags = _hashManager.GetWordFlags(part);
         if (flags is null)
         {
+            // If COMPOUNDMORESUFFIXES is enabled, try to check if this could be
+            // a word with affixes applied. This is a simplified check.
+            if (_compoundMoreSuffixes && IsValidCompoundPartWithAffixes(part, wordCount, endPos, fullWord))
+            {
+                return true;
+            }
             return false; // Word not in dictionary
         }
 
@@ -816,6 +822,66 @@ internal sealed class AffixManager : IDisposable
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Check if a compound part could be valid with affixes applied (COMPOUNDMORESUFFIXES).
+    /// This is a simplified implementation that checks for common suffix patterns.
+    /// </summary>
+    /// <remarks>
+    /// COMPOUNDMORESUFFIXES allows twofold suffixes within compounds. Full implementation
+    /// requires deep integration with affix stripping/application logic. This simplified
+    /// version provides basic support by attempting to strip common suffixes and check
+    /// the resulting base forms.
+    /// </remarks>
+    private bool IsValidCompoundPartWithAffixes(string part, int wordCount, int endPos, string fullWord)
+    {
+        // Try stripping common English suffixes as a basic implementation
+        // In a full implementation, this would use the actual affix rules
+        string[] commonSuffixes = { "s", "es", "ed", "ing", "er", "est", "ly", "ness", "ment", "tion" };
+        
+        foreach (var suffix in commonSuffixes)
+        {
+            if (part.Length > suffix.Length + _compoundMin && part.EndsWith(suffix))
+            {
+                var basePart = part.Substring(0, part.Length - suffix.Length);
+                var baseFlags = _hashManager.GetWordFlags(basePart);
+                
+                if (baseFlags is not null)
+                {
+                    // Check if the base word has appropriate compound flags
+                    bool hasCompoundFlag = false;
+                    
+                    if (wordCount == 0)
+                    {
+                        hasCompoundFlag = (_compoundBegin is not null && baseFlags.Contains(_compoundBegin)) ||
+                                        (_compoundFlag is not null && baseFlags.Contains(_compoundFlag));
+                    }
+                    else if (endPos < fullWord.Length)
+                    {
+                        hasCompoundFlag = (_compoundMiddle is not null && baseFlags.Contains(_compoundMiddle)) ||
+                                        (_compoundFlag is not null && baseFlags.Contains(_compoundFlag));
+                    }
+                    else
+                    {
+                        hasCompoundFlag = (_compoundEnd is not null && baseFlags.Contains(_compoundEnd)) ||
+                                        (_compoundFlag is not null && baseFlags.Contains(_compoundFlag));
+                    }
+                    
+                    if (hasCompoundFlag)
+                    {
+                        // Check COMPOUNDFORBIDFLAG
+                        if (_compoundForbidFlag is not null && baseFlags.Contains(_compoundForbidFlag))
+                        {
+                            continue;
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        return false;
     }
 
     /// <summary>
