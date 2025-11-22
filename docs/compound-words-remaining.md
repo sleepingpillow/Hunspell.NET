@@ -57,6 +57,11 @@ COMPOUNDRULE N*M
 - ✅ Basic flag group handling with parentheses
 - ✅ Integration with compound checking algorithm
 - ⚠️ Advanced features like `|` (alternation) in groups not yet implemented
+- ⚠️ Performance optimization needed for complex patterns (list copying)
+
+**Known limitations:**
+- Group expressions like `(AB)*` treat the group as a single flag, not individual flags
+- Pattern matching creates list copies on each recursion (optimization opportunity)
 
 **Test coverage:** 5 tests covering basic patterns, star quantifier, and validation
 
@@ -90,6 +95,9 @@ CHECKCOMPOUNDPATTERN aa/X bb/Y replacement
 - ✅ Boundary pattern matching at compound split points
 - ✅ Flag checking for patterns
 - ⚠️ Replacement handling parsed but not yet fully implemented
+
+**Known limitations:**
+- Replacement parameter is parsed but not applied during compound checking
 
 **Test coverage:** 5 tests covering forbidden patterns and flag validation
 
