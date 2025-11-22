@@ -47,7 +47,14 @@ public sealed class HunspellSpellChecker : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentException.ThrowIfNullOrWhiteSpace(word);
 
-        return _hashManager?.Lookup(word) ?? false;
+        // First check if it's in the dictionary
+        if (_hashManager?.Lookup(word) ?? false)
+        {
+            return true;
+        }
+
+        // If not found, check if it's a valid compound word
+        return _affixManager?.CheckCompound(word) ?? false;
     }
 
     /// <summary>

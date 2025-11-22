@@ -1,0 +1,5 @@
+# Test CHECKCOMPOUNDCASE
+# Forbid uppercase at word boundaries
+SET UTF-8
+CHECKCOMPOUNDCASE
+COMPOUNDFLAG A

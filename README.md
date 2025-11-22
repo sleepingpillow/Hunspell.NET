@@ -6,6 +6,7 @@ A modern .NET 10 port of the popular Hunspell spell checker library. This implem
 
 - ✅ **Spell Checking**: Fast and accurate word validation
 - ✅ **Suggestion Generation**: Intelligent suggestions for misspelled words
+- ✅ **Compound Word Support**: Full support for compound words with customizable rules
 - ✅ **Runtime Dictionary Management**: Add/remove words at runtime
 - ✅ **Dictionary File Support**: Compatible with standard Hunspell .dic and .aff files
 - ✅ **Modern C# 13**: Uses latest language features including file-scoped namespaces, record types, and pattern matching
@@ -125,6 +126,30 @@ finally
     spellChecker.Dispose();
 }
 ```
+
+### Compound Words
+
+Hunspell.NET supports compound words - words formed by combining multiple words together. This is essential for languages like German, Dutch, Swedish, Finnish, and others.
+
+```csharp
+// Dictionary with compound support
+using var spellChecker = new HunspellSpellChecker("de_DE.aff", "de_DE.dic");
+
+// Check compound words
+bool isValid = spellChecker.Spell("Donaudampfschiff"); // true (German compound)
+
+// Compound rules can be configured in the .aff file
+// See docs/compound-words.md for detailed documentation
+```
+
+**Supported compound features:**
+- COMPOUNDFLAG, COMPOUNDBEGIN, COMPOUNDMIDDLE, COMPOUNDEND
+- COMPOUNDMIN, COMPOUNDWORDMAX
+- CHECKCOMPOUNDDUP, CHECKCOMPOUNDCASE, CHECKCOMPOUNDTRIPLE
+- ONLYINCOMPOUND, COMPOUNDPERMITFLAG, COMPOUNDFORBIDFLAG
+- And more...
+
+For complete documentation, see [docs/compound-words.md](docs/compound-words.md).
 
 ## Modern .NET 10 Features Used
 
