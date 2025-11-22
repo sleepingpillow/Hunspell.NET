@@ -1,0 +1,29 @@
+Hunspell.NET is tri-licensed under:
+- Mozilla Public License Version 1.1 (MPL 1.1)
+- GNU General Public License Version 2 or later (GPL 2.0+)
+- GNU Lesser General Public License Version 2.1 or later (LGPL 2.1+)
+
+You may choose any of these licenses when using Hunspell.NET.
+
+This is the same licensing as the original Hunspell library.
+
+===================================================================
+
+Based on Hunspell by László Németh and contributors.
+Copyright (C) 2002-2022 Németh László
+Copyright (C) 2025 Hunspell.NET Contributors
+
+Original Hunspell contributors include:
+David Einstein, Davide Prina, Giuseppe Modugno, Gianluca Turconi,
+Simon Brouwer, Noll János, Bíró Árpád, Goldman Eleonóra,
+Sarlós Tamás, Bencsáth Boldizsár, Halácsy Péter, Dvornik László,
+Gefferth András, Nagy Viktor, Varga Dániel, Chris Halls,
+Rene Engelhard, Bram Moolenaar, Dafydd Jones, Harri Pitkänen,
+and many others.
+
+===================================================================
+
+For the full text of each license, see:
+- MPL 1.1: https://www.mozilla.org/en-US/MPL/1.1/
+- GPL 2.0: https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+- LGPL 2.1: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html

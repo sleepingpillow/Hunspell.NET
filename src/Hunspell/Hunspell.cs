@@ -105,6 +105,9 @@ public sealed class HunspellSpellChecker : IDisposable
     /// </summary>
     public string DictionaryEncoding => _affixManager?.Encoding ?? "UTF-8";
 
+    /// <summary>
+    /// Releases all resources used by the HunspellSpellChecker.
+    /// </summary>
     public void Dispose()
     {
         if (!_disposed)
