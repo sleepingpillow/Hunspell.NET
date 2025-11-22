@@ -362,16 +362,21 @@ internal sealed class AffixManager : IDisposable
     /// </summary>
     private bool CheckCompoundRecursive(string word, int wordCount, int position)
     {
-        // Check maximum word count
-        if (_compoundWordMax > 0 && wordCount >= _compoundWordMax)
-        {
-            return false;
-        }
-
         // If we've consumed the entire word, we have a valid compound
         if (position >= word.Length)
         {
+            // Check if we're within the maximum word count limit
+            if (_compoundWordMax > 0 && wordCount > _compoundWordMax)
+            {
+                return false;
+            }
             return wordCount >= 2; // Must have at least 2 parts to be a compound
+        }
+
+        // Check if adding another word would exceed the maximum
+        if (_compoundWordMax > 0 && wordCount + 1 > _compoundWordMax)
+        {
+            return false;
         }
 
         // Try different split positions
@@ -520,6 +525,22 @@ internal sealed class AffixManager : IDisposable
         }
 
         return true;
+    }
+
+    /// <summary>
+    /// Check if a word has the ONLYINCOMPOUND flag.
+    /// </summary>
+    public bool IsOnlyInCompound(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (_onlyInCompound is null)
+        {
+            return false;
+        }
+
+        var flags = _hashManager.GetWordFlags(word);
+        return flags is not null && flags.Contains(_onlyInCompound);
     }
 
     public void Dispose()

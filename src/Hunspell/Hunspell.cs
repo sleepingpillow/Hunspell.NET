@@ -50,6 +50,12 @@ public sealed class HunspellSpellChecker : IDisposable
         // First check if it's in the dictionary
         if (_hashManager?.Lookup(word) ?? false)
         {
+            // Check if the word is marked as ONLYINCOMPOUND
+            // If so, it's only valid inside compounds, not standalone
+            if (_affixManager?.IsOnlyInCompound(word) ?? false)
+            {
+                return false;
+            }
             return true;
         }
 
