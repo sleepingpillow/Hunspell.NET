@@ -942,18 +942,23 @@ internal sealed class AffixManager : IDisposable
         // Try breaking at each break point
         foreach (var breakPoint in _breakPoints)
         {
-            int index = word.IndexOf(breakPoint);
-            if (index > 0 && index < word.Length - breakPoint.Length)
+            // Find all occurrences of the break point
+            int index = 0;
+            while ((index = word.IndexOf(breakPoint, index)) >= 0)
             {
-                // Break the word into parts
-                var before = word.Substring(0, index);
-                var after = word.Substring(index + breakPoint.Length);
-
-                // Both parts must be valid (recursively)
-                if (CheckBreakRecursive(before) && CheckBreakRecursive(after))
+                if (index > 0 && index < word.Length - breakPoint.Length)
                 {
-                    return true;
+                    // Break the word into parts
+                    var before = word.Substring(0, index);
+                    var after = word.Substring(index + breakPoint.Length);
+
+                    // Both parts must be valid (recursively)
+                    if (CheckBreakRecursive(before) && CheckBreakRecursive(after))
+                    {
+                        return true;
+                    }
                 }
+                index++; // Move to next position
             }
         }
 
