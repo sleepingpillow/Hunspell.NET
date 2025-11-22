@@ -39,6 +39,9 @@ internal sealed class AffixManager : IDisposable
     private bool _simplifiedTriple = false;
     private bool _checkCompoundRep = false;
 
+    // Compound rules (COMPOUNDRULE)
+    private readonly List<string> _compoundRules = new();
+
     public string Encoding => _options.TryGetValue("SET", out var encoding) ? encoding : "UTF-8";
 
     public AffixManager(string affixPath, HashManager hashManager)
@@ -202,6 +205,22 @@ internal sealed class AffixManager : IDisposable
                 _checkCompoundRep = true;
                 break;
 
+            case "COMPOUNDRULE":
+                if (parts.Length > 1)
+                {
+                    // First COMPOUNDRULE line contains the count, subsequent lines contain patterns
+                    if (int.TryParse(parts[1], out _))
+                    {
+                        // This is the count line, ignore it (we'll just collect patterns)
+                    }
+                    else
+                    {
+                        // This is a pattern line
+                        _compoundRules.Add(parts[1]);
+                    }
+                }
+                break;
+
             case "KEY":
             case "REP":
             case "MAP":
@@ -347,6 +366,13 @@ internal sealed class AffixManager : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
+        // If COMPOUNDRULE is defined, use it for compound checking
+        if (_compoundRules.Count > 0)
+        {
+            return CheckCompoundWithRules(word);
+        }
+
+        // Otherwise, use flag-based compound checking
         // If no compound flags are defined, no compounds are allowed
         if (_compoundFlag is null && _compoundBegin is null)
         {
@@ -355,6 +381,190 @@ internal sealed class AffixManager : IDisposable
 
         // Try to split the word into valid compound parts
         return CheckCompoundRecursive(word, 0, 0, null);
+    }
+
+    /// <summary>
+    /// Check if a word matches any COMPOUNDRULE pattern.
+    /// </summary>
+    private bool CheckCompoundWithRules(string word)
+    {
+        // Try each compound rule
+        foreach (var rule in _compoundRules)
+        {
+            if (MatchesCompoundRule(word, rule, 0, 0, new List<string>()))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Recursively match a word against a COMPOUNDRULE pattern.
+    /// </summary>
+    /// <param name="word">The word to check</param>
+    /// <param name="pattern">The COMPOUNDRULE pattern</param>
+    /// <param name="wordPos">Current position in the word</param>
+    /// <param name="patternPos">Current position in the pattern</param>
+    /// <param name="matchedParts">List of matched word parts (for debugging)</param>
+    private bool MatchesCompoundRule(string word, string pattern, int wordPos, int patternPos, List<string> matchedParts)
+    {
+        // If we've consumed the entire word and pattern, we have a match
+        if (wordPos >= word.Length && patternPos >= pattern.Length)
+        {
+            return matchedParts.Count >= 2; // Must have at least 2 parts
+        }
+
+        // If we've consumed the word but not the pattern, check if remaining pattern is optional
+        if (wordPos >= word.Length)
+        {
+            return IsPatternOptional(pattern, patternPos);
+        }
+
+        // If we've consumed the pattern but not the word, no match
+        if (patternPos >= pattern.Length)
+        {
+            return false;
+        }
+
+        // Parse the current pattern element
+        var (flag, quantifier, nextPatternPos) = ParsePatternElement(pattern, patternPos);
+
+        // Handle quantifiers
+        if (quantifier == '*')
+        {
+            // Zero or more: try matching zero times first, then one or more
+            if (MatchesCompoundRule(word, pattern, wordPos, nextPatternPos, new List<string>(matchedParts)))
+            {
+                return true;
+            }
+            // Try matching one or more times
+            return TryMatchFlagMultipleTimes(word, pattern, wordPos, patternPos, nextPatternPos, flag, matchedParts, allowZero: false);
+        }
+        else if (quantifier == '?')
+        {
+            // Zero or one: try matching zero times first, then one time
+            if (MatchesCompoundRule(word, pattern, wordPos, nextPatternPos, new List<string>(matchedParts)))
+            {
+                return true;
+            }
+            // Try matching once
+            return TryMatchFlagOnce(word, pattern, wordPos, nextPatternPos, flag, matchedParts);
+        }
+        else
+        {
+            // Exactly once
+            return TryMatchFlagOnce(word, pattern, wordPos, nextPatternPos, flag, matchedParts);
+        }
+    }
+
+    /// <summary>
+    /// Try to match a flag one time at the current word position.
+    /// </summary>
+    private bool TryMatchFlagOnce(string word, string pattern, int wordPos, int nextPatternPos, string flag, List<string> matchedParts)
+    {
+        // Try different word lengths starting from COMPOUNDMIN
+        for (int len = _compoundMin; len <= word.Length - wordPos; len++)
+        {
+            var part = word.Substring(wordPos, len);
+            var flags = _hashManager.GetWordFlags(part);
+
+            if (flags is not null && flags.Contains(flag))
+            {
+                var newMatchedParts = new List<string>(matchedParts) { part };
+                if (MatchesCompoundRule(word, pattern, wordPos + len, nextPatternPos, newMatchedParts))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Try to match a flag multiple times (for * quantifier).
+    /// </summary>
+    private bool TryMatchFlagMultipleTimes(string word, string pattern, int wordPos, int patternPos, int nextPatternPos, string flag, List<string> matchedParts, bool allowZero)
+    {
+        // Try matching one time and continue with the same pattern element
+        for (int len = _compoundMin; len <= word.Length - wordPos; len++)
+        {
+            var part = word.Substring(wordPos, len);
+            var flags = _hashManager.GetWordFlags(part);
+
+            if (flags is not null && flags.Contains(flag))
+            {
+                var newMatchedParts = new List<string>(matchedParts) { part };
+                // Continue trying to match more of the same flag (stay at patternPos)
+                if (MatchesCompoundRule(word, pattern, wordPos + len, patternPos, newMatchedParts))
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Parse a pattern element (flag with optional quantifier).
+    /// </summary>
+    /// <returns>Tuple of (flag, quantifier, nextPosition)</returns>
+    private (string flag, char quantifier, int nextPos) ParsePatternElement(string pattern, int pos)
+    {
+        if (pos >= pattern.Length)
+        {
+            return (string.Empty, '\0', pos);
+        }
+
+        // Check for parentheses (group)
+        if (pattern[pos] == '(')
+        {
+            int endParen = pattern.IndexOf(')', pos);
+            if (endParen > pos)
+            {
+                var group = pattern.Substring(pos + 1, endParen - pos - 1);
+                int nextPos = endParen + 1;
+                char quantifier = '\0';
+                
+                if (nextPos < pattern.Length && (pattern[nextPos] == '*' || pattern[nextPos] == '?'))
+                {
+                    quantifier = pattern[nextPos];
+                    nextPos++;
+                }
+                
+                return (group, quantifier, nextPos);
+            }
+        }
+
+        // Single flag character
+        string flag = pattern[pos].ToString();
+        int next = pos + 1;
+        char quant = '\0';
+
+        if (next < pattern.Length && (pattern[next] == '*' || pattern[next] == '?'))
+        {
+            quant = pattern[next];
+            next++;
+        }
+
+        return (flag, quant, next);
+    }
+
+    /// <summary>
+    /// Check if the remaining pattern is all optional (all have * or ? quantifiers).
+    /// </summary>
+    private bool IsPatternOptional(string pattern, int pos)
+    {
+        while (pos < pattern.Length)
+        {
+            var (_, quantifier, nextPos) = ParsePatternElement(pattern, pos);
+            if (quantifier != '*' && quantifier != '?')
+            {
+                return false;
+            }
+            pos = nextPos;
+        }
+        return true;
     }
 
     /// <summary>

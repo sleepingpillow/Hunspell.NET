@@ -115,7 +115,7 @@ Limit compound words by maximum syllable count. Primarily used for Hungarian.
 ### COMPOUNDRULE compound_pattern
 Define custom compound patterns with a regex-like syntax. Compound patterns consist of compound flags, parentheses, star and question mark meta characters.
 
-**Status:** ❌ Not yet implemented (See [remaining plan](compound-words-remaining.md) - Priority 1, High Impact)
+**Status:** ✅ Implemented (supports `*` and `?` quantifiers, basic parentheses)
 
 ### BREAK number_of_definitions
 ### BREAK character_or_character_sequence
@@ -241,6 +241,47 @@ spellChecker.Spell("anyany");         // true - COMPOUNDFLAG works anywhere
 // Invalid - wrong positions
 spellChecker.Spell("endstart");       // false - end can't be first
 spellChecker.Spell("midend");         // false - mid can't be first
+```
+
+### COMPOUNDRULE Patterns
+
+**Affix file (compoundrule.aff):**
+```
+COMPOUNDMIN 1
+COMPOUNDRULE 1
+COMPOUNDRULE ABC
+```
+
+**Dictionary file (compoundrule.dic):**
+```
+3
+a/A
+b/B
+c/BC
+```
+
+**Usage:**
+```csharp
+using var spellChecker = new HunspellSpellChecker("compoundrule.aff", "compoundrule.dic");
+
+// Valid - matches pattern ABC (flag A, then B, then C)
+spellChecker.Spell("abc");  // true - a/A + b/B + c/BC
+spellChecker.Spell("acc");  // true - a/A + c/BC + c/BC (c has both B and C)
+
+// Invalid - doesn't match pattern
+spellChecker.Spell("ab");   // false - only 2 parts, need 3
+spellChecker.Spell("ba");   // false - wrong order
+```
+
+**Star quantifier example (A*B*C*):**
+```csharp
+// Pattern A*B*C* means: zero or more A, then zero or more B, then zero or more C
+using var spellChecker = new HunspellSpellChecker("star.aff", "star.dic");
+
+spellChecker.Spell("aa");     // true - A* (2 A's)
+spellChecker.Spell("abc");    // true - A*B*C*
+spellChecker.Spell("aabbcc"); // true - multiple of each
+spellChecker.Spell("ba");     // false - wrong order
 ```
 
 ## Implementation Notes
