@@ -1,0 +1,5 @@
+# Basic compound word test
+# Words with flag A can be compounded
+SET UTF-8
+COMPOUNDFLAG A
+COMPOUNDMIN 3

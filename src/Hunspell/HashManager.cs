@@ -94,6 +94,24 @@ internal sealed class HashManager : IDisposable
         return _words.Keys.Concat(_runtimeWords);
     }
 
+    /// <summary>
+    /// Get the flags associated with a word.
+    /// </summary>
+    /// <param name="word">The word to look up</param>
+    /// <returns>The flags string if found, null otherwise</returns>
+    public string? GetWordFlags(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        
+        if (_words.TryGetValue(word, out var entry))
+        {
+            return entry.Flags;
+        }
+        
+        // Runtime words have no flags
+        return _runtimeWords.Contains(word) ? string.Empty : null;
+    }
+
     public void Dispose()
     {
         if (!_disposed)

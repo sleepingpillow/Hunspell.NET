@@ -1,0 +1,5 @@
+# Test CHECKCOMPOUNDDUP
+# Forbid word duplication in compounds
+SET UTF-8
+CHECKCOMPOUNDDUP
+COMPOUNDFLAG A

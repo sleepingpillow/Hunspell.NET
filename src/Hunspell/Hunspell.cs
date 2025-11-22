@@ -47,7 +47,26 @@ public sealed class HunspellSpellChecker : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentException.ThrowIfNullOrWhiteSpace(word);
 
-        return _hashManager?.Lookup(word) ?? false;
+        // First check if it's in the dictionary
+        if (_hashManager?.Lookup(word) ?? false)
+        {
+            // Check if the word is marked as ONLYINCOMPOUND
+            // If so, it's only valid inside compounds, not standalone
+            if (_affixManager?.IsOnlyInCompound(word) ?? false)
+            {
+                return false;
+            }
+            return true;
+        }
+
+        // Check if word can be broken at break points and all parts are valid
+        if (_affixManager?.CheckBreak(word) ?? false)
+        {
+            return true;
+        }
+
+        // If not found, check if it's a valid compound word
+        return _affixManager?.CheckCompound(word) ?? false;
     }
 
     /// <summary>

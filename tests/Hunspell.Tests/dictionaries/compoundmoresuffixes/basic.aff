@@ -1,0 +1,4 @@
+# Allow twofold suffixes within compounds
+COMPOUNDFLAG A
+COMPOUNDMORESUFFIXES
+COMPOUNDMIN 3

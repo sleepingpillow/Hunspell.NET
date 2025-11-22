@@ -1,0 +1,8 @@
+# Word break points test
+SET UTF-8
+
+BREAK 2
+BREAK -
+BREAK /
+
+WORDCHARS -/
