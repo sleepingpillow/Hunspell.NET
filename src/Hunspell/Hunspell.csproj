@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    
+
     <!-- NuGet Package Metadata -->
     <PackageId>Hunspell.NET</PackageId>
     <Version>1.0.0</Version>

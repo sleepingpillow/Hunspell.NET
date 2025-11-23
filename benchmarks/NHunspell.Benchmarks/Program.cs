@@ -1,0 +1,89 @@
+using System;
+using System.IO;
+using BenchmarkDotNet.Attributes;
+using BenchmarkDotNet.Running;
+using BenchmarkDotNet.Configs;
+using BenchmarkDotNet.Jobs;
+using BenchmarkDotNet.Toolchains.InProcess.Emit;
+using NHunspell;
+
+public class Program
+{
+    public static void Main(string[] args)
+    {
+        var config = DefaultConfig.Instance
+            .AddJob(Job.Default.WithToolchain(InProcessEmitToolchain.Instance));
+        BenchmarkRunner.Run<NHunspellBenchmarks>(config);
+    }
+}
+
+[MemoryDiagnoser]
+public class NHunspellBenchmarks
+{
+    private Hunspell _hunspellChecker;
+
+    private readonly string[] _testWords = new[]
+    {
+        "hund", "katt", "bil", "hus", "mat", "vatten", "sol", "måne", "stjärna", "blomma",
+        "trä", "sten", "jord", "eld", "luft", "vind", "regn", "snö", "is", "värme",
+        "kyla", "ljus", "mörker", "tid", "plats", "person", "djur", "växt", "maskin", "verktyg",
+        "matematik", "fysik", "kemi", "biologi", "historia", "geografi", "språk", "litteratur", "konst", "musik",
+        "sport", "spel", "arbete", "ledighet", "resa", "hem", "skola", "universitet", "bok", "tidning"
+    };
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        // Setup NHunspell with Swedish dictionary
+        string baseDir = AppContext.BaseDirectory;
+        string affixPath = Path.Combine(baseDir, "dictionaries", "sv_FI.aff");
+        string dictionaryPath = Path.Combine(baseDir, "dictionaries", "sv_FI.dic");
+        _hunspellChecker = new Hunspell(affixPath, dictionaryPath);
+    }
+
+    [GlobalCleanup]
+    public void Cleanup()
+    {
+        _hunspellChecker?.Dispose();
+    }
+
+    [Benchmark]
+    public void SpellCheck_CorrectWords()
+    {
+        foreach (var word in _testWords)
+        {
+            _hunspellChecker.Spell(word);
+        }
+    }
+
+    [Benchmark]
+    public void SpellCheck_IncorrectWords()
+    {
+        foreach (var word in _testWords)
+        {
+            var misspelled = word + "x"; // Make it misspelled
+            _hunspellChecker.Spell(misspelled);
+        }
+    }
+
+    [Benchmark]
+    public void Suggest_Corrections()
+    {
+        foreach (var word in _testWords)
+        {
+            var misspelled = word + "x"; // Make it misspelled
+            _hunspellChecker.Suggest(misspelled);
+        }
+    }
+
+    [Benchmark]
+    public void LoadDictionary()
+    {
+        // This benchmark measures dictionary loading time
+        var projectRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+        var affPath = Path.Combine(projectRoot, "benchmarks", "NHunspell.Benchmarks", "dictionaries", "sv_FI.aff");
+        var dicPath = Path.Combine(projectRoot, "benchmarks", "NHunspell.Benchmarks", "dictionaries", "sv_FI.dic");
+        using var checker = new Hunspell(affPath, dicPath);
+        checker.Spell("test");
+    }
+}
