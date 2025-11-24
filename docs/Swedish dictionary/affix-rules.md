@@ -1,56 +1,101 @@
-# Affix-regler och ordtyper i svensk Hunspell
 
-Den svenska Hunspell-ordboken använder ett antal affix-regler för att hantera böjningar, sammansättningar och specialfall. Nedan beskrivs de viktigaste reglerna, deras syfte och exempel på ord de påverkar.
+# Affix-regler och flaggor i svensk Hunspell
 
-## 1. SET UTF-8
-- **Syfte:** Hantera svenska tecken korrekt.
-- **Exempel:** "å", "ä", "ö"
+## Innehållsförteckning
+- SET
+- TRY
+- WORDCHARS
+- BREAK
+- NOSUGGEST
+- FORBIDDENWORD / FORBIDFLAG
+- NEEDAFFIX
+- COMPOUNDMIN, COMPOUNDRULE, COMPOUNDPERMITFLAG, COMPOUNDBEGIN, COMPOUNDMIDDLE, COMPOUNDEND, ONLYINCOMPOUND
+- MAXCPDSUGS, MAXDIFF, ONLYMAXDIFF, NOSPLITSUGS
+- FULLSTRIP, FORCEUCASE
+- MAP
+- REP
+- Suffixflaggor (A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, T, e, d, z, g, y, h, x, w, v, f, u, i, t, s, r, b, 1, 7)
+- Specialflaggor och pragma-direktiv
 
-## 2. Suffixregler (t.ex. genitiv, adjektiv, plural)
-- **Flaggor:** A, D, S, P, ...
+---
+
+## Exempel på flaggsektion (mall):
+
+### [FLAGNAME]
+- **Teknisk funktion:** [Beskrivning av hur Hunspell tolkar och använder flaggan]
+- **Språkligt syfte:** [Hur flaggan används för svenska böjningar/sammansättningar]
+- **Exempel:** [Konkreta ord och former]
+- **Edge cases / specialfall:** [Eventuella undantag, begränsningar, eller typiska fel]
+
+---
+
+
+---
+
+## SET
+- **Teknisk funktion:** Anger teckenkodning för ordboken. För svenska används alltid `SET UTF-8` för att stödja tecken som å, ä, ö.
+- **Språkligt syfte:** Möjliggör korrekt hantering av svenska bokstäver och specialtecken.
 - **Exempel:**
-  - "hund" → "hunds" (genitiv, flagga A)
-  - "stor" → "större" (komparativ, flagga D)
-  - "katt" → "katter" (plural, flagga P)
+	- SET UTF-8
+- **Edge cases:** Om fel teckenkodning används kan svenska ord tolkas felaktigt.
 
-## 3. Prefixregler
-- **Syfte:** Hantera t.ex. "o-" för negation ("osäker")
-
-## 4. Sammansättningsregler
-- **COMPOUNDRULE:** Definierar hur ord kan kombineras.
-- **ONLYINCOMPOUND:** Ord som bara får användas i sammansättningar.
+## TRY
+- **Teknisk funktion:** Lista av tecken Hunspell ska prioritera vid förslagsgenerering (stavningskorrigering).
+- **Språkligt syfte:** Anpassas för svenska vanliga bokstäver och typiska felskrivningar.
 - **Exempel:**
-  - "sjö" + "bod" → "sjöbod"
-  - "för" + "fattare" → "författare"
+	- TRY abcdefghijklmnopqrstuvwxyzåäö
+- **Edge cases:** En dåligt vald TRY-lista kan ge sämre förslag vid stavfel.
 
-## 5. MAXCPDSUGS
-- **Syfte:** Begränsar antal sammansättningsförslag.
+## WORDCHARS
+- **Teknisk funktion:** Definierar vilka tecken som får ingå i ord (utöver bokstäver). Används för t.ex. bindestreck, apostrof, förkortningar.
+- **Språkligt syfte:** Möjliggör svenska ord med t.ex. "e-post", "bl.a.".
 - **Exempel:**
-  - sv_FI: MAXCPDSUGS 2 (max två sammansatta ord)
-  - sv_SE: MAXCPDSUGS 0 (ingen begränsning)
+	- WORDCHARS -.'
+- **Edge cases:** Om tecken saknas här kan vissa ord inte hanteras korrekt.
 
-## 6. REP (ersättningsregler)
-- **Syfte:** Förbättra förslagsgenerering vid stavfel.
+## BREAK
+- **Teknisk funktion:** Anger avgränsare och regler för att dela upp sammansatta ord och förkortningar.
+- **Språkligt syfte:** Hanterar svenska förkortningar och sammansättningar med punkt eller bindestreck.
 - **Exempel:**
-  - "å" ↔ "a"
-  - "ä" ↔ "e"
+	- BREAK .
+	- BREAK -
+- **Edge cases:** Felaktiga BREAK-regler kan ge felaktiga sammansättningsförslag.
 
-## 7. BREAK
-- **Syfte:** Hantera avgränsare i sammansatta ord och förkortningar.
+## NOSUGGEST
+- **Teknisk funktion:** Markerar ord som inte ska föreslås vid stavningskorrigering.
+- **Språkligt syfte:** Används för t.ex. känsliga, olämpliga eller föråldrade ord.
 - **Exempel:**
-  - "bl.a." (förkortning)
-  - "e-post"
+	- NOSUGGEST
+- **Edge cases:** Om för många ord markeras kan förslagslistan bli för snäv.
 
-## 8. Specialflaggor och undantag
+## FORBIDDENWORD / FORBIDFLAG
+- **Teknisk funktion:** Anger ord som är förbjudna, t.ex. felaktiga sammansättningar eller ord som inte ska godkännas.
+- **Språkligt syfte:** Förhindrar felaktiga eller oönskade ordformer.
 - **Exempel:**
-  - "förbjudna" sammansättningar (FORBIDFLAG)
-  - "position"-regler (POSITION)
+	- FORBIDDENWORD
+	- FORBIDFLAG X
+- **Edge cases:** Om för många ord förbjuds kan giltiga former uteslutas.
 
-## 9. Exempel på ordtyper
-- Grundord: "hund", "katt", "bil"
-- Sammansatta ord: "sjöbod", "e-postadress"
-- Förkortningar: "bl.a.", "t.ex."
-- Pluralformer: "hundar", "katter"
-- Genitiv: "hunds", "katts"
+## NEEDAFFIX
+- **Teknisk funktion:** Markerar ord som måste ha ett affix (prefix/suffix) för att vara giltiga.
+- **Språkligt syfte:** Används för t.ex. rotmorfem som bara får förekomma i sammansättningar.
+- **Exempel:**
+	- NEEDAFFIX
+- **Edge cases:** Kan leda till att vissa ord inte känns igen om affix saknas.
+
+## COMPOUNDMIN, COMPOUNDRULE, COMPOUNDPERMITFLAG, COMPOUNDBEGIN, COMPOUNDMIDDLE, COMPOUNDEND, ONLYINCOMPOUND
+- **Teknisk funktion:** Styr hur sammansatta ord bildas och vilka delar som får användas i början, mitten eller slutet av en sammansättning.
+- **Språkligt syfte:** Möjliggör svenska sammansättningar med rätt morfologisk struktur.
+- **Exempel:**
+	- COMPOUNDMIN 3 (minsta antal tecken per del)
+	- COMPOUNDRULE 12 (regel för sammansättning)
+	- COMPOUNDPERMITFLAG Y
+	- COMPOUNDBEGIN A
+	- COMPOUNDMIDDLE B
+	- COMPOUNDEND C
+	- ONLYINCOMPOUND
+- **Edge cases:** Felaktiga regler kan ge grammatiskt felaktiga sammansättningar.
+
+---
 
 Se [validation.md](./validation.md) för hur dessa regler används för stavningsvalidering.
