@@ -37,7 +37,7 @@ internal sealed class AffixManager : IDisposable
     private int _compoundMin = 3;
     private int _compoundWordMax = 0; // 0 means unlimited
     private bool _compoundMoreSuffixes = false;
-    
+
     // Compound syllable options (COMPOUNDSYLLABLE)
     private int _compoundSyllableMax = 0; // 0 means no syllable limit
     private string _compoundSyllableVowels = string.Empty;
@@ -77,7 +77,7 @@ internal sealed class AffixManager : IDisposable
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(affixPath);
         _hashManager = hashManager ?? throw new ArgumentNullException(nameof(hashManager));
-        
+
         LoadAffix(affixPath);
     }
 
@@ -90,7 +90,7 @@ internal sealed class AffixManager : IDisposable
 
         using var stream = File.OpenRead(affixPath);
         using var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        
+
         string? line;
         while (reader.ReadLine() is { } rline)
         {
@@ -312,7 +312,7 @@ internal sealed class AffixManager : IDisposable
                         var (endChars, endFlag) = ParseFlaggedPart(parts[1]);
                         var (beginChars, beginFlag) = ParseFlaggedPart(parts[2]);
                         var replacement = parts.Length > 3 ? parts[3] : null;
-                        
+
                         _compoundPatterns.Add(new CompoundPattern(endChars, endFlag, beginChars, beginFlag, replacement));
                     }
                 }
@@ -422,7 +422,7 @@ internal sealed class AffixManager : IDisposable
     {
         // PFX/SFX flag cross_product count
         // PFX/SFX flag stripping prefix [condition [morphological_fields...]]
-        
+
         if (parts.Length < 4)
         {
             return;
@@ -434,7 +434,7 @@ internal sealed class AffixManager : IDisposable
         var condition = parts.Length > 4 ? parts[4] : ".";
 
         var rule = new AffixRule(flag, stripping, affix, condition, isPrefix);
-        
+
         if (isPrefix)
         {
             _prefixes.Add(rule);
@@ -587,7 +587,7 @@ internal sealed class AffixManager : IDisposable
 
         // Try to split the word into valid compound parts
         bool result = CheckCompoundRecursive(word, 0, 0, null, 0);
-        
+
         if (result && _checkCompoundRep)
         {
             // Check if this compound matches a dictionary word via REP replacements
@@ -596,7 +596,7 @@ internal sealed class AffixManager : IDisposable
                 return false; // Forbid compound if it matches via REP
             }
         }
-        
+
         return result;
     }
 
@@ -1044,13 +1044,13 @@ internal sealed class AffixManager : IDisposable
                 var group = pattern.Substring(pos + 1, endParen - pos - 1);
                 int nextPos = endParen + 1;
                 char quantifier = '\0';
-                
+
                 if (nextPos < pattern.Length && (pattern[nextPos] == '*' || pattern[nextPos] == '?'))
                 {
                     quantifier = pattern[nextPos];
                     nextPos++;
                 }
-                
+
                 return (group, quantifier, nextPos);
             }
         }
@@ -1228,19 +1228,19 @@ internal sealed class AffixManager : IDisposable
     {
         // Try stripping common English suffixes as a basic implementation
         // In a full implementation, this would use the actual affix rules
-        
+
         foreach (var suffix in CommonSuffixes)
         {
             if (part.Length >= suffix.Length + _compoundMin && part.EndsWith(suffix))
             {
                 var basePart = part[..^suffix.Length];
                 var baseFlags = _hashManager.GetWordFlags(basePart);
-                
+
                 if (baseFlags is not null)
                 {
                     // Check if the base word has appropriate compound flags
                     bool hasCompoundFlag = false;
-                    
+
                     if (wordCount == 0)
                     {
                         hasCompoundFlag = (_compoundBegin is not null && baseFlags.Contains(_compoundBegin)) ||
@@ -1256,7 +1256,7 @@ internal sealed class AffixManager : IDisposable
                         hasCompoundFlag = (_compoundEnd is not null && baseFlags.Contains(_compoundEnd)) ||
                                         (_compoundFlag is not null && baseFlags.Contains(_compoundFlag));
                     }
-                    
+
                     if (hasCompoundFlag)
                     {
                         // Check COMPOUNDFORBIDFLAG
@@ -1269,7 +1269,7 @@ internal sealed class AffixManager : IDisposable
                 }
             }
         }
-        
+
         return false;
     }
 
@@ -1284,7 +1284,7 @@ internal sealed class AffixManager : IDisposable
         }
 
         // Check CHECKCOMPOUNDDUP - forbid duplicated words
-        if (_checkCompoundDup && previousPart is not null && 
+        if (_checkCompoundDup && previousPart is not null &&
             previousPart.Equals(currentPart, StringComparison.OrdinalIgnoreCase))
         {
             return false;
@@ -1297,7 +1297,7 @@ internal sealed class AffixManager : IDisposable
             {
                 var lastChar = word[prevEnd - 1];
                 var firstChar = word[prevEnd];
-                
+
                 // Forbid lowercase followed by uppercase at boundary
                 if (char.IsLower(lastChar) && char.IsUpper(firstChar))
                 {
@@ -1315,7 +1315,7 @@ internal sealed class AffixManager : IDisposable
                 var char1 = word[prevEnd - 2];
                 var char2 = word[prevEnd - 1];
                 var char3 = word[prevEnd];
-                
+
                 if (char1 == char2 && char2 == char3)
                 {
                     // Check for simplified triple exception
@@ -1491,7 +1491,7 @@ internal sealed class AffixManager : IDisposable
     }
 
     private record AffixRule(string Flag, string Stripping, string Affix, string Condition, bool IsPrefix);
-    
+
     /// <summary>
     /// Represents a CHECKCOMPOUNDPATTERN rule.
     /// </summary>
