@@ -56,6 +56,18 @@ public sealed class HunspellSpellChecker : IDisposable
             {
                 return false;
             }
+            // If this dictionary entry requires an affix (NEEDAFFIX), a bare
+            // dictionary form should not be accepted by itself.
+            if (_affixManager?.RequiresAffix(word) ?? false)
+            {
+                return false;
+            }
+            return true;
+        }
+
+        // If it's an affix-derived form (e.g., foos from foo + SFX 's'), accept it
+        if (_affixManager?.CheckAffixedWord(word) ?? false)
+        {
             return true;
         }
 

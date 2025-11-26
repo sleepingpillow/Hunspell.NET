@@ -3,6 +3,7 @@
 // Licensed under MPL 1.1/GPL 2.0/LGPL 2.1
 
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace Hunspell;
 
@@ -130,7 +131,32 @@ internal sealed class AffixManager : IDisposable
                 continue;
             }
 
-            ProcessAffixLine(rline);
+            // Several compound-related directives occasionally appear with their
+            // value on the following line (many upstream test files use this style).
+            // Support multi-line arguments for common compound flags here so later
+            // parsing logic (ProcessAffixLine) isn't required to handle that style.
+            var trimmed = line.Trim();
+            if (string.Equals(trimmed, "COMPOUNDFLAG", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(trimmed, "COMPOUNDBEGIN", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(trimmed, "COMPOUNDMIDDLE", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(trimmed, "COMPOUNDFORBIDFLAG", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(trimmed, "COMPOUNDPERMITFLAG", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(trimmed, "COMPOUNDEND", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(trimmed, "COMPOUNDLAST", StringComparison.OrdinalIgnoreCase))
+            {
+                while (reader.ReadLine() is { } nextLine)
+                {
+                    var t = nextLine.Trim();
+                    if (string.IsNullOrEmpty(t) || t.StartsWith('#')) continue;
+
+                    // Append the argument token to the current logical line so the
+                    // existing ProcessAffixLine() handling can pick it up cleanly.
+                    line = line + " " + t;
+                    break;
+                }
+                // Feed this modified line through ProcessAffixLine below
+            }
+            ProcessAffixLine(line);
         }
     }
 
@@ -428,9 +454,20 @@ internal sealed class AffixManager : IDisposable
             return;
         }
 
+        // Some affix files use a header line like "SFX A Y 1" which indicates
+        // the flag and a following count. If the 4th token is an integer this is
+        // a header and not an actual rule line; skip it.
+        if (int.TryParse(parts[3], out _))
+        {
+            return;
+        }
+
         var flag = parts[1];
         var stripping = parts[2] == "0" ? string.Empty : parts[2];
-        var affix = parts[3];
+        // The affix token may carry an appended /flag (e.g., "s/Y").
+        // Extract only the affix text portion before any slash.
+        var affixField = parts[3];
+        var affix = affixField.Split('/', StringSplitOptions.None)[0];
         var condition = parts.Length > 4 ? parts[4] : ".";
 
         var rule = new AffixRule(flag, stripping, affix, condition, isPrefix);
@@ -563,6 +600,7 @@ internal sealed class AffixManager : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
+            if (word == "foofoobar" || word == "fojtófa" || word == "BAZfoo") { /* debug trace removed */ }
         // If COMPOUNDRULE is defined, use it for compound checking
         if (_compoundRules.Count > 0)
         {
@@ -605,17 +643,23 @@ internal sealed class AffixManager : IDisposable
     /// </summary>
     private bool CheckCompoundRep(string word)
     {
-        // For each REP rule, apply it to the word and check if result is in dictionary
+        // For each REP rule, attempt replacing the 'from' substring at every
+        // possible position (one occurrence at a time) and check whether the
+        // modified word exists in the dictionary. This mirrors Hunspell's
+        // positional replacement checks and is important for multi-byte
+        // characters where naive replace-all can mis-handle positions.
         foreach (var (from, to) in _repTable)
         {
-            if (word.Contains(from))
+            if (string.IsNullOrEmpty(from)) continue;
+            int idx = 0;
+            while ((idx = word.IndexOf(from, idx, StringComparison.Ordinal)) >= 0)
             {
-                var modified = word.Replace(from, to);
+                var modified = word.Substring(0, idx) + to + word.Substring(idx + from.Length);
                 if (_hashManager.Lookup(modified))
                 {
-                    // This compound matches a dictionary word via REP replacement
                     return true;
                 }
+                idx++; // continue searching after this position
             }
         }
         return false;
@@ -1108,7 +1152,12 @@ internal sealed class AffixManager : IDisposable
                     return false;
                 }
             }
-            return wordCount >= 2; // Must have at least 2 parts to be a compound
+            var ok = wordCount >= 2; // Must have at least 2 parts to be a compound
+            if (ok)
+            {
+                // matched
+            }
+            return ok;
         }
 
         // Check if adding another word would exceed the maximum
@@ -1126,6 +1175,7 @@ internal sealed class AffixManager : IDisposable
         for (int i = position + _compoundMin; i <= word.Length; i++)
         {
             var part = word.Substring(position, i - position);
+            if (word == "foofoobar" || word == "fojtófa" || word == "BAZfoo") { /* debug trace removed */ }
 
             // Check if this part is valid for its position in the compound
             if (!IsValidCompoundPart(part, wordCount, position, i, word))
@@ -1143,7 +1193,11 @@ internal sealed class AffixManager : IDisposable
             int partSyllables = CountSyllables(part);
 
             // Try to continue building the compound
-            if (CheckCompoundRecursive(word, wordCount + 1, i, part, syllableCount + partSyllables))
+            // If this part is itself a valid two-word compound, it contributes
+            // two components to the overall word count (so enforce COMPOUNDWORDMAX
+            // correctly). Otherwise it contributes a single component.
+            var contribution = IsCompoundMadeOfTwoWords(part) ? 2 : 1;
+            if (CheckCompoundRecursive(word, wordCount + contribution, i, part, syllableCount + partSyllables))
             {
                 return true;
             }
@@ -1165,7 +1219,22 @@ internal sealed class AffixManager : IDisposable
 
         // Get the word's flags from the dictionary
         var flags = _hashManager.GetWordFlags(part);
-        if (flags is null)
+        // Debug traces removed
+        // Allow basic separator handling (hyphens) by attempting trimmed lookups if direct lookup fails
+        var lookUpPart = part;
+        if (flags is null && (part.StartsWith('-') || part.EndsWith('-')))
+        {
+            var trimmed = part.Trim('-');
+            if (!string.IsNullOrEmpty(trimmed))
+            {
+                flags = _hashManager.GetWordFlags(trimmed);
+                if (flags is not null)
+                {
+                    lookUpPart = trimmed; // use trimmed variant for further flag checks
+                }
+            }
+        }
+            if (flags is null)
         {
             // If COMPOUNDMORESUFFIXES is enabled, try to check if this could be
             // a word with affixes applied. This is a simplified check.
@@ -1173,35 +1242,68 @@ internal sealed class AffixManager : IDisposable
             {
                 return true;
             }
+            // If the part can be produced by affix rules (e.g., suffix application), allow it
+            if (CheckAffixedWord(part))
+            {
+                return true;
+            }
+
+            // If the part can be formed as a valid two-word compound, allow it
+            if (IsCompoundMadeOfTwoWords(part))
+            {
+                return true;
+            }
+
             return false; // Word not in dictionary
         }
 
         // Check position-specific flags
         if (wordCount == 0)
         {
-            // First word in compound
-            if (_compoundBegin is not null && !flags.Contains(_compoundBegin) &&
-                _compoundFlag is not null && !flags.Contains(_compoundFlag))
+            // First word in compound: require either the compound-begin flag (if defined)
+            // or the generic compound flag (if defined).
+            if (_compoundBegin is not null)
             {
-                return false;
+                if (!flags.Contains(_compoundBegin) && (_compoundFlag is null || !flags.Contains(_compoundFlag)) && (_onlyInCompound is null || !flags.Contains(_onlyInCompound)))
+                {
+                    return false;
+                }
+            }
+            else if (_compoundFlag is not null)
+            {
+                if (!flags.Contains(_compoundFlag) && (_onlyInCompound is null || !flags.Contains(_onlyInCompound))) return false;
             }
         }
         else if (endPos < fullWord.Length)
         {
-            // Middle word in compound
-            if (_compoundMiddle is not null && !flags.Contains(_compoundMiddle) &&
-                _compoundFlag is not null && !flags.Contains(_compoundFlag))
+            // Middle word in compound: require either the compound-middle flag (if defined)
+            // or the generic compound flag (if defined).
+            if (_compoundMiddle is not null)
             {
-                return false;
+                if (!flags.Contains(_compoundMiddle) && (_compoundFlag is null || !flags.Contains(_compoundFlag)) && (_onlyInCompound is null || !flags.Contains(_onlyInCompound)))
+                {
+                    return false;
+                }
+            }
+            else if (_compoundFlag is not null)
+            {
+                if (!flags.Contains(_compoundFlag) && (_onlyInCompound is null || !flags.Contains(_onlyInCompound))) return false;
             }
         }
         else
         {
-            // Last word in compound
-            if (_compoundEnd is not null && !flags.Contains(_compoundEnd) &&
-                _compoundFlag is not null && !flags.Contains(_compoundFlag))
+            // Last word in compound: require either the compound-end flag (if defined)
+            // or the generic compound flag (if defined).
+            if (_compoundEnd is not null)
             {
-                return false;
+                if (!flags.Contains(_compoundEnd) && (_compoundFlag is null || !flags.Contains(_compoundFlag)) && (_onlyInCompound is null || !flags.Contains(_onlyInCompound)))
+                {
+                    return false;
+                }
+            }
+            else if (_compoundFlag is not null)
+            {
+                if (!flags.Contains(_compoundFlag) && (_onlyInCompound is null || !flags.Contains(_onlyInCompound))) return false;
             }
         }
 
@@ -1278,16 +1380,39 @@ internal sealed class AffixManager : IDisposable
     /// </summary>
     private bool CheckCompoundRules(string word, int prevEnd, int currentEnd, string? previousPart, string currentPart)
     {
+        // check boundary rules for the boundary between prevEnd and currentEnd
         if (prevEnd == 0)
         {
             return true; // No previous part to check against
         }
 
-        // Check CHECKCOMPOUNDDUP - forbid duplicated words
-        if (_checkCompoundDup && previousPart is not null &&
-            previousPart.Equals(currentPart, StringComparison.OrdinalIgnoreCase))
+        // Check CHECKCOMPOUNDDUP - forbid duplicated words or duplicated atomic
+        // components across boundaries. This also looks into simple two-word
+        // components (e.g., "foofoo" -> "foo" + "foo") to detect duplicates
+        // across the boundary when nested components would otherwise hide them.
+        if (_checkCompoundDup && previousPart is not null)
         {
-            return false;
+            if (previousPart.Equals(currentPart, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            // If the current part is itself a simple two-word compound and its
+            // first atomic subpart equals the previous part, upstream Hunspell
+            // allows the sequence (e.g., "foo" + "fooBar" is allowed). We do
+            // not reject this case here.
+
+            // If the previous part is a simple two-word compound and its last
+            // atomic subpart equals the current part, that's also a duplicate
+            // across the boundary (e.g., prev="fooBar", current="Bar").
+            var previousSplit = FindTwoWordSplit(previousPart);
+            if (previousSplit is not null)
+            {
+                if (previousSplit.Value.second.Equals(currentPart, StringComparison.OrdinalIgnoreCase))
+                {
+                    return false;
+                }
+            }
         }
 
         // Check CHECKCOMPOUNDCASE - forbid uppercase letters at boundaries
@@ -1298,10 +1423,21 @@ internal sealed class AffixManager : IDisposable
                 var lastChar = word[prevEnd - 1];
                 var firstChar = word[prevEnd];
 
-                // Forbid lowercase followed by uppercase at boundary
-                if (char.IsLower(lastChar) && char.IsUpper(firstChar))
+                // Only apply case checks for adjacent letters. If either side is not a letter
+                // (e.g., a hyphen), then the check is skipped and the compound may be allowed.
+                if (char.IsLetter(lastChar) && char.IsLetter(firstChar))
                 {
-                    return false;
+                    // DEBUG TRACE - can be removed once behavior verified
+                    // Console debug removed — rely on unit tests for validation
+                        // CHECKCOMPOUNDCASE: forbid uppercase initial letter of the next
+                        // component at the boundary (e.g. fooBar is invalid). Upstream
+                        // Hunspell allows an uppercase earlier component followed by
+                        // lowercase (e.g. BAZfoo).
+                        if (char.IsUpper(lastChar) || char.IsUpper(firstChar))
+                        {
+                            // boundary case rejected
+                            return false;
+                        }
                 }
             }
         }
@@ -1309,19 +1445,21 @@ internal sealed class AffixManager : IDisposable
         // Check CHECKCOMPOUNDTRIPLE - forbid triple repeating letters
         if (_checkCompoundTriple && prevEnd >= 1 && currentEnd > prevEnd + 1)
         {
-            // Check if we have three consecutive identical letters at the boundary
-            if (prevEnd >= 2)
+            // Check if we have three consecutive identical letters overlapping the boundary
+            // We'll look for any run of three identical chars that overlaps the boundary
+            int start = Math.Max(0, prevEnd - 2);
+            int end = Math.Min(word.Length - 3, prevEnd);
+            for (int i = start; i <= end; i++)
             {
-                var char1 = word[prevEnd - 2];
-                var char2 = word[prevEnd - 1];
-                var char3 = word[prevEnd];
-
-                if (char1 == char2 && char2 == char3)
+                if (word[i] == word[i + 1] && word[i + 1] == word[i + 2])
                 {
-                    // Check for simplified triple exception
-                    if (!_simplifiedTriple)
+                    // Ensure the triple sequence overlaps the boundary (i..i+2 includes prevEnd-1..prevEnd etc.)
+                    if (i <= prevEnd && i + 2 >= prevEnd)
                     {
-                        return false;
+                        if (!_simplifiedTriple)
+                        {
+                            return false;
+                        }
                     }
                 }
             }
@@ -1399,6 +1537,132 @@ internal sealed class AffixManager : IDisposable
     }
 
     /// <summary>
+    /// Return true if the given dictionary word requires an affix to be valid
+    /// (i.e. marked by NEEDAFFIX). This mirrors the NEEDAFFIX directive's intent.
+    /// </summary>
+    public bool RequiresAffix(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (_needAffixFlag is null) return false;
+
+        var flags = _hashManager.GetWordFlags(word);
+        return flags is not null && flags.Contains(_needAffixFlag);
+    }
+
+    /// <summary>
+    /// Try to validate a word by applying simple affix rules (prefix/suffix)
+    /// and checking if the resulting base exists in the dictionary. This is a
+    /// simplified check sufficient for many tests (e.g., SFX 's' forming plurals).
+    /// </summary>
+    public bool CheckAffixedWord(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (string.IsNullOrEmpty(word)) return false;
+
+        // Try suffix rules (simple form: remove appended affix and check base root)
+        foreach (var sx in _suffixes)
+        {
+            // sx.Affix is the text appended, stripping indicates string to strip from root
+            if (string.IsNullOrEmpty(sx.Affix)) continue;
+            if (word.EndsWith(sx.Affix, StringComparison.Ordinal))
+            {
+                var baseCandidate = word[..^sx.Affix.Length];
+
+                // If stripping value present and not '0', ensure the base suffix is present
+                if (!string.IsNullOrEmpty(sx.Stripping) && sx.Stripping != "0")
+                {
+                    if (baseCandidate.EndsWith(sx.Stripping, StringComparison.Ordinal))
+                    {
+                        baseCandidate = baseCandidate[..^sx.Stripping.Length];
+                    }
+                    else
+                    {
+                        // Expected stripping substring not found; cannot apply rule
+                        continue;
+                    }
+                }
+
+                // If a condition is present, ensure the base candidate satisfies it
+                if (!string.IsNullOrEmpty(sx.Condition) && sx.Condition != ".")
+                {
+                    try
+                    {
+                        if (!Regex.IsMatch(baseCandidate, sx.Condition + "$", RegexOptions.CultureInvariant))
+                        {
+                            continue; // condition not met
+                        }
+                    }
+                    catch (ArgumentException)
+                    {
+                        // invalid regex in condition - fall back to rejecting this rule
+                        continue;
+                    }
+                }
+
+                // If the candidate is a dictionary root, the affixed word is valid
+                if (_hashManager.Lookup(baseCandidate))
+                {
+                    return true;
+                }
+
+                // Also allow the base candidate when it is a valid two-word compound
+                if (IsCompoundMadeOfTwoWords(baseCandidate))
+                {
+                    return true;
+                }
+
+                // Do not accept a baseCandidate simply because it's a concatenation
+                // of two dictionary words; compound-inner-boundaries must be
+                // validated by explicit splitting instead.
+            }
+        }
+
+        // Try prefix rules (mirror logic)
+        foreach (var px in _prefixes)
+        {
+            if (string.IsNullOrEmpty(px.Affix)) continue;
+            if (word.StartsWith(px.Affix, StringComparison.Ordinal))
+            {
+                var baseCandidate = word.Substring(px.Affix.Length);
+
+                if (!string.IsNullOrEmpty(px.Stripping) && px.Stripping != "0")
+                {
+                    if (baseCandidate.StartsWith(px.Stripping, StringComparison.Ordinal))
+                    {
+                        baseCandidate = baseCandidate.Substring(px.Stripping.Length);
+                    }
+                    else
+                    {
+                        continue;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(px.Condition) && px.Condition != ".")
+                {
+                    try
+                    {
+                        if (!Regex.IsMatch(baseCandidate, "^" + px.Condition, RegexOptions.CultureInvariant))
+                        {
+                            continue; // condition not met
+                        }
+                    }
+                    catch (ArgumentException)
+                    {
+                        continue;
+                    }
+                }
+
+                if (_hashManager.Lookup(baseCandidate)) return true;
+                if (IsCompoundMadeOfTwoWords(baseCandidate)) return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Count syllables in a word based on vowel characters.
     /// </summary>
     private int CountSyllables(string word)
@@ -1417,6 +1681,65 @@ internal sealed class AffixManager : IDisposable
             }
         }
         return count;
+    }
+
+    /// <summary>
+    /// Check whether the supplied word can be made by concatenating exactly two
+    /// dictionary words that meet the minimum compound length constraints. This
+    /// provides a shallow nested-compound check without unbounded recursion.
+    /// </summary>
+    private bool IsCompoundMadeOfTwoWords(string word)
+    {
+        if (string.IsNullOrEmpty(word)) return false;
+        if (word.Length < 2 * _compoundMin) return false;
+
+            for (int i = _compoundMin; i <= word.Length - _compoundMin; i++)
+        {
+            var a = word.Substring(0, i);
+            var b = word.Substring(i);
+
+                // both pieces must be present in the dictionary
+                if (_hashManager.Lookup(a) && _hashManager.Lookup(b))
+                {
+                    // Validate that each subcomponent would be valid in the position it
+                    // would occupy (first and last) and that the internal boundary
+                    // obeys compound rules. This prevents allowing nested splits that
+                    // violate COMPOUNDFLAG/position constraints (e.g., a first component
+                    // without the required compound flag).
+                    if (!IsValidCompoundPart(a, 0, 0, i, word)) continue;
+                    if (!IsValidCompoundPart(b, 1, i, word.Length, word)) continue;
+
+                    // validate the internal boundary's compound rules
+                    if (CheckCompoundRules(word, i, word.Length, a, b))
+                    {
+                        // matched and valid
+                        return true;
+                    }
+                }
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Try to split a word into two dictionary words honoring _compoundMin.
+    /// Returns (first, second) if a split is found; otherwise null.
+    /// </summary>
+    private (string first, string second)? FindTwoWordSplit(string word)
+    {
+        if (string.IsNullOrEmpty(word)) return null;
+        if (word.Length < 2 * _compoundMin) return null;
+
+        for (int i = _compoundMin; i <= word.Length - _compoundMin; i++)
+        {
+            var a = word.Substring(0, i);
+            var b = word.Substring(i);
+
+            if (_hashManager.Lookup(a) && _hashManager.Lookup(b))
+            {
+                return (a, b);
+            }
+        }
+        return null;
     }
 
     /// <summary>
