@@ -365,7 +365,7 @@ namespace Tools.Munch
                         // For this heuristic we accept components that exist. Additional checks (begin/middle/end) are done in MatchesCompoundRules stage below.
                         return true;
                     }
-                    
+
                     bool ValidateComponentSequence(string[] parts, AffixSet affset, HashSet<string> baseSet, Dictionary<string, WordEntry> wmap)
                     {
                         // Check duplication

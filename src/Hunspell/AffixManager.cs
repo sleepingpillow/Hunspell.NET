@@ -91,9 +91,46 @@ internal sealed class AffixManager : IDisposable
         using var stream = File.OpenRead(affixPath);
         using var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
         
-        while (reader.ReadLine() is { } line)
+        string? line;
+        while (reader.ReadLine() is { } rline)
         {
-            ProcessAffixLine(line);
+            // handle directives that put their argument on the following line
+            // e.g. "COMPOUNDRULE" followed by pattern on next line, or
+            // "ONLYINCOMPOUND" followed by the flag on the next line
+            line = rline.TrimEnd();
+            if (string.Equals(line.Trim(), "COMPOUNDRULE", StringComparison.OrdinalIgnoreCase))
+            {
+                // read next non-empty non-comment line as the pattern
+                while (reader.ReadLine() is { } nextLine)
+                {
+                    var t = nextLine.Trim();
+                    if (string.IsNullOrEmpty(t) || t.StartsWith('#')) continue;
+                    // add the pattern straight into the list
+                    _compoundRules.Add(t);
+                    break;
+                }
+                continue;
+            }
+
+            if (string.Equals(line.Trim(), "ONLYINCOMPOUND", StringComparison.OrdinalIgnoreCase))
+            {
+                // read next non-empty non-comment line for the flag(s)
+                while (reader.ReadLine() is { } nextLine)
+                {
+                    var t = nextLine.Trim();
+                    if (string.IsNullOrEmpty(t) || t.StartsWith('#')) continue;
+                    // take the first token on the next line as the only-in-compound flag
+                    var parts = t.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (parts.Length > 0)
+                    {
+                        _onlyInCompound = parts[0];
+                    }
+                    break;
+                }
+                continue;
+            }
+
+            ProcessAffixLine(rline);
         }
     }
 
@@ -613,7 +650,88 @@ internal sealed class AffixManager : IDisposable
         // If we've consumed the entire word and pattern, we have a match
         if (wordPos >= word.Length && patternPos >= pattern.Length)
         {
-            return matchedParts.Count >= 2; // Must have at least 2 parts
+            // Must have at least 2 parts
+            if (matchedParts.Count < 2) return false;
+
+            // Post-validate ordinals: if the last part looks like an ordinal suffix
+            // (st, nd, rd, th) and the preceding parts are numeric, ensure the
+            // ordinal suffix is valid for the numeric value (e.g. 10001th is invalid).
+            var lastRaw = matchedParts[^1];
+            var last = lastRaw.ToLowerInvariant();
+
+            // detect if the terminal part contains an ordinal suffix either as whole part
+            // or as trailing letters following digits (e.g. "1th"). Extract trailing letters.
+            int firstNonDigit = 0;
+            while (firstNonDigit < lastRaw.Length && char.IsDigit(lastRaw[firstNonDigit])) firstNonDigit++;
+            var trailingLetters = firstNonDigit < lastRaw.Length ? lastRaw.Substring(firstNonDigit).ToLowerInvariant() : string.Empty;
+            if (!string.IsNullOrEmpty(trailingLetters) &&
+                (trailingLetters.StartsWith("st") || trailingLetters.StartsWith("nd") || trailingLetters.StartsWith("rd") || trailingLetters.StartsWith("th")) ||
+                (string.IsNullOrEmpty(trailingLetters) && (last.StartsWith("st") || last.StartsWith("nd") || last.StartsWith("rd") || last.StartsWith("th"))))
+            {
+                // Collect preceding consecutive numeric parts, but also include any
+                // leading digit sequence from the final part (e.g. '1' from '1th')
+                var digitsReversed = new List<string>();
+                // If final part starts with digits, include that prefix
+                if (firstNonDigit > 0)
+                {
+                    digitsReversed.Add(lastRaw.Substring(0, firstNonDigit));
+                }
+
+                for (int i = matchedParts.Count - 2; i >= 0; i--)
+                {
+                    var part = matchedParts[i];
+                    if (part.All(c => char.IsDigit(c)))
+                    {
+                        digitsReversed.Add(part);
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                if (digitsReversed.Count > 0)
+                {
+                    digitsReversed.Reverse();
+                    var numStr = string.Concat(digitsReversed);
+                    // Extract only digits (defensive)
+                    var digitOnly = new string(numStr.Where(char.IsDigit).ToArray());
+                    if (!string.IsNullOrEmpty(digitOnly) && int.TryParse(digitOnly.Length <= 2 ? digitOnly : digitOnly[^2..], out var lastTwo))
+                    {
+                        // ordinal validation check (no debug output)
+                        // derive rule: if lastTwo is 11..13 then suffix should be 'th'
+                        bool isElevenToThirteen = lastTwo >= 11 && lastTwo <= 13;
+                        int lastDigit = digitOnly.Length > 0 ? (digitOnly[^1] - '0') : 0;
+
+                        var suffixToCheck = !string.IsNullOrEmpty(trailingLetters) ? trailingLetters : last;
+                        if (suffixToCheck.StartsWith("th"))
+                        {
+                            // valid when number ends with 11..13 OR ends with 0 or 4..9
+                            if (!isElevenToThirteen && (lastDigit == 1 || lastDigit == 2 || lastDigit == 3))
+                                return false; // e.g., 10001th invalid
+                        }
+                        else if (suffixToCheck.StartsWith("st"))
+                        {
+                            // st valid for lastDigit ==1 unless lastTwo == 11
+                            if (lastDigit != 1 || isElevenToThirteen)
+                                return false;
+                        }
+                        else if (suffixToCheck.StartsWith("nd"))
+                        {
+                            if (lastDigit != 2 || isElevenToThirteen)
+                                return false;
+                        }
+                        else if (suffixToCheck.StartsWith("rd"))
+                        {
+                            if (lastDigit != 3 || isElevenToThirteen)
+                                return false;
+                        }
+                    }
+                }
+            }
+
+            // final acceptance
+            return true;
         }
 
         // If we've consumed the word but not the pattern, check if remaining pattern is optional
@@ -670,15 +788,38 @@ internal sealed class AffixManager : IDisposable
             var part = word.Substring(wordPos, len);
             var flags = _hashManager.GetWordFlags(part);
 
-            if (flags is not null && flags.Contains(flag))
+            // If pattern element is a single-character digit token (e.g., '1'..'7')
+            // treat it as a special token classification and match accordingly.
+            if (flag.Length == 1 && char.IsDigit(flag[0]))
             {
-                var newMatchedParts = new List<string>(matchedParts) { part };
-                if (MatchesCompoundRule(word, pattern, wordPos + len, nextPatternPos, newMatchedParts))
+                if (ComponentMatchesDigitClass(part, flag[0]))
                 {
-                    return true;
+                    var newMatchedParts = new List<string>(matchedParts) { part };
+                    if (MatchesCompoundRule(word, pattern, wordPos + len, nextPatternPos, newMatchedParts))
+                    {
+                        return true;
+                    }
+                }
+
+                // Try the next length
+                continue;
+            }
+
+            // If we have flags for the current part, and any character in the pattern element
+            // matches one of those flags, try advancing the pattern to nextPatternPos.
+            if (flags is not null)
+            {
+                if (flag.Any(ch => flags.Contains(ch)))
+                {
+                    var newMatchedParts = new List<string>(matchedParts) { part };
+                    if (MatchesCompoundRule(word, pattern, wordPos + len, nextPatternPos, newMatchedParts))
+                    {
+                        return true;
+                    }
                 }
             }
         }
+
         return false;
     }
 
@@ -687,23 +828,200 @@ internal sealed class AffixManager : IDisposable
     /// </summary>
     private bool TryMatchFlagMultipleTimes(string word, string pattern, int wordPos, int patternPos, int nextPatternPos, string flag, List<string> matchedParts, bool allowZero)
     {
-        // Try matching one time and continue with the same pattern element
+        // Try matching one or more occurrences of the same pattern element (quantifier *)
         for (int len = _compoundMin; len <= word.Length - wordPos; len++)
         {
             var part = word.Substring(wordPos, len);
             var flags = _hashManager.GetWordFlags(part);
 
-            if (flags is not null && flags.Contains(flag))
+            // Digit-token handling (1..7)
+            if (flag.Length == 1 && char.IsDigit(flag[0]))
+            {
+                if (ComponentMatchesDigitClass(part, flag[0]))
+                {
+                    var newMatchedParts = new List<string>(matchedParts) { part };
+                    // Stay at the same pattern position to allow additional repeats
+                    if (MatchesCompoundRule(word, pattern, wordPos + len, patternPos, newMatchedParts))
+                    {
+                        return true;
+                    }
+                }
+
+                // try next length
+                continue;
+            }
+
+            // For flag groups / characters, if any char in the pattern element exists in the part's flags
+            // then we can advance while keeping patternPos for additional repeats
+            if (flags is not null && flag.Any(ch => flags.Contains(ch)))
             {
                 var newMatchedParts = new List<string>(matchedParts) { part };
-                // Continue trying to match more of the same flag (stay at patternPos)
                 if (MatchesCompoundRule(word, pattern, wordPos + len, patternPos, newMatchedParts))
                 {
                     return true;
                 }
             }
         }
+
         return false;
+    }
+
+    private bool ComponentMatchesDigitClass(string component, char digitToken)
+    {
+        // '1' -> digits-only
+        if (digitToken == '1')
+        {
+            return component.All(c => char.IsDigit(c));
+        }
+
+        // '3' -> mixed digits/letters or digit groups with punctuation
+        if (digitToken == '3')
+        {
+            if (System.Text.RegularExpressions.Regex.IsMatch(component, "^\\d+[\\-:\\.]\\d+$")) return true;
+            bool hasLetter = component.Any(c => char.IsLetter(c));
+            bool hasDigit = component.Any(c => char.IsDigit(c));
+            return hasLetter && hasDigit;
+        }
+
+        // For spelled-number / ordinal detection reuse helpers similar to the muncher
+        if (digitToken == '2' || digitToken == '4' || digitToken == '5' || digitToken == '7' || digitToken == '6')
+        {
+            var s = component.Replace("-", "").Replace(" ", "").ToLowerInvariant();
+            if (digitToken == '6')
+            {
+                // heuristic: suffix-based numeric-like classes (e.g. år, års, åring, tals)
+                var suffixes = new[] { "år", "års", "åring", "tals", "tal" };
+                return suffixes.Any(suf => s.EndsWith(suf));
+            }
+
+            if (TryParseSpelledNumber(s, out var value, out var isOrdinal))
+            {
+                if (digitToken == '2')
+                {
+                    // spelled-number class (units/tens/teens/hundreds up to 100)
+                    return value >= 1 && value <= 100; // treat 0..100 as class 2
+                }
+                if (digitToken == '4') return value >= 100 && value % 100 == 0; // multiples of 100
+                if (digitToken == '5') return value >= 1000; // >= 1000
+                if (digitToken == '7') return isOrdinal; // ordinal
+            }
+
+            // fallback spelled-number detection for class 2
+            if (digitToken == '2')
+            {
+                return IsSpelledNumber(s);
+            }
+
+            return false;
+        }
+
+        return false;
+    }
+
+    // Copy adapted helpers from muncher for spelled-number parsing
+    private bool TryParseSpelledNumber(string input, out int value, out bool isOrdinal)
+    {
+        value = 0;
+        isOrdinal = false;
+        if (string.IsNullOrEmpty(input)) return false;
+
+        var s = input.Replace("-", "").Replace(" ", "");
+        s = s.ToLowerInvariant();
+
+        var ordSuffixMap = new Dictionary<string, string>(StringComparer.InvariantCultureIgnoreCase)
+        {
+            {"första", "en"}, {"först", "en"}, {"andra", "två"}, {"tredje", "tre"}, {"fjärde", "fyra"}, {"femte", "fem"}, {"sjätte", "sex"}, {"sjunde", "sju"}, {"åttonde", "åtta"}, {"nionde", "nio"}, {"tionde", "tio"},
+            {"hundrade", "hundra"}, {"tusende", "tusen"}
+        };
+
+        foreach (var kv in ordSuffixMap.OrderByDescending(e => e.Key.Length))
+        {
+            var suf = kv.Key.ToLowerInvariant();
+            if (s.EndsWith(suf, StringComparison.InvariantCultureIgnoreCase))
+            {
+                isOrdinal = true;
+                s = s.Substring(0, s.Length - suf.Length) + kv.Value;
+                break;
+            }
+        }
+
+        var units = new Dictionary<string,int> {
+            {"noll",0},{"en",1},{"ett",1},{"två",2},{"tva",2},{"tre",3},{"fyra",4},{"fem",5},{"sex",6},{"sju",7},{"åtta",8},{"atta",8},{"nio",9}
+        };
+        var teens = new Dictionary<string,int> {
+            {"tio",10},{"elva",11},{"tolv",12},{"treton",13},{"fjorton",14},{"femton",15},{"sexton",16},{"sjutton",17},{"arton",18},{"nitton",19}
+        };
+        var tens = new Dictionary<string,int> {
+            {"tjugo",20},{"trettio",30},{"fyrtio",40},{"femtio",50},{"sextio",60},{"sjuttio",70},{"åttio",80},{"attio",80},{"nittio",90}
+        };
+
+        var idx = 0;
+        int total = 0;
+        int current = 0;
+        bool matched = false;
+
+        while (idx < s.Length)
+        {
+            matched = false;
+
+            if (s.Substring(idx).StartsWith("miljarder")) { if (current==0) current=1; total += current * 1000000000; current = 0; idx += "miljarder".Length; matched = true; continue; }
+            if (s.Substring(idx).StartsWith("miljard")) { if (current==0) current=1; total += current * 1000000000; current = 0; idx += "miljard".Length; matched = true; continue; }
+            if (s.Substring(idx).StartsWith("miljoner")) { if (current==0) current=1; total += current * 1000000; current = 0; idx += "miljoner".Length; matched = true; continue; }
+            if (s.Substring(idx).StartsWith("miljon")) { if (current==0) current=1; total += current * 1000000; current = 0; idx += "miljon".Length; matched = true; continue; }
+            if (s.Substring(idx).StartsWith("tusentals")) { if (current==0) current=1; total += current * 1000; current = 0; idx += "tusentals".Length; matched = true; continue; }
+            if (s.Substring(idx).StartsWith("tusen")) { if (current==0) current=1; total += current * 1000; current = 0; idx += "tusen".Length; matched = true; continue; }
+
+            if (s.Substring(idx).StartsWith("hundra")) { if (current==0) current=1; current *= 100; idx += "hundra".Length; matched = true; continue; }
+
+            // tens
+            foreach (var t in tens.OrderByDescending(x=>x.Key.Length))
+            {
+                if (s.Substring(idx).StartsWith(t.Key)) { current += t.Value; idx += t.Key.Length; matched = true; break; }
+            }
+            if (matched) continue;
+
+            // teens
+            foreach (var t in teens.OrderByDescending(x=>x.Key.Length))
+            {
+                if (s.Substring(idx).StartsWith(t.Key)) { current += t.Value; idx += t.Key.Length; matched = true; break; }
+            }
+            if (matched) continue;
+
+            // units
+            foreach (var u in units.OrderByDescending(x=>x.Key.Length))
+            {
+                if (s.Substring(idx).StartsWith(u.Key)) { current += u.Value; idx += u.Key.Length; matched = true; break; }
+            }
+            if (!matched) break;
+        }
+
+        if (!matched && current==0 && total==0) return false;
+
+        total += current;
+
+        value = total;
+        return true;
+    }
+
+    private bool IsSpelledNumber(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return false;
+        var tokens = new[] { "noll", "en", "ett", "två", "tre", "fyra", "fem", "sex", "sju", "åtta", "nio",
+            "tio", "elva", "tolv", "treton", "fjorton", "femton", "sexton", "sjutton", "arton", "nitton", "tjugo",
+            "trettio", "fyrtio", "femtio", "sextio", "sjuttio", "åttio", "nittio", "hundra", "tusen", "miljon", "miljoner", "miljard", "miljarder", "och" };
+
+        int idx = 0; bool matched = false;
+        while (idx < s.Length)
+        {
+            matched = false;
+            foreach (var t in tokens.OrderByDescending(t => t.Length))
+            {
+                if (s.Substring(idx).StartsWith(t)) { idx += t.Length; matched = true; break; }
+            }
+            if (!matched) break;
+        }
+
+        return matched && idx >= s.Length;
     }
 
     /// <summary>
