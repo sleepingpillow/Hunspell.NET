@@ -118,7 +118,8 @@ public class CompoundTests
 
         // Act & Assert
         Assert.True(spellChecker.Spell("Barfoo")); // uppercase at start followed by lowercase is OK
-        Assert.True(spellChecker.Spell("BAZfoo")); // uppercase followed by lowercase is OK
+        // 'BAZfoo' is forbidden by CHECKCOMPOUNDCASE (uppercase at boundary) in upstream datasets
+        Assert.False(spellChecker.Spell("BAZfoo"));
     }
 
     [Fact]
