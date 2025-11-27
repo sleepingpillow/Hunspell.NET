@@ -4,6 +4,12 @@
 
 using System.Text;
 using System.Text.RegularExpressions;
+                // If the part can be produced by affix rules (e.g., suffix application),
+                // allow it, but only when the underlying base that produced the affixed
+                // form would itself be a valid compound part in this position. This
+                // prevents allowing derived forms like "foosuf" to serve as the left
+                // hand of a compound where the derived form lacks the required compound
+                // flag.
 
 namespace Hunspell;
 
@@ -131,8 +137,10 @@ internal sealed class AffixManager : IDisposable
                 continue;
             }
 
-            // Several compound-related directives occasionally appear with their
-            // value on the following line (many upstream test files use this style).
+            // Several directives occasionally appear with their value on the
+            // following line (many upstream test files use this style). Support
+            // multi-line arguments for common directives so ProcessAffixLine()
+            // can handle a single logical line consistently.
             // Support multi-line arguments for common compound flags here so later
             // parsing logic (ProcessAffixLine) isn't required to handle that style.
             var trimmed = line.Trim();
@@ -155,6 +163,81 @@ internal sealed class AffixManager : IDisposable
                     break;
                 }
                 // Feed this modified line through ProcessAffixLine below
+            }
+            // Handle multi-line PFX/SFX rule formats that use a header line followed
+            // by one or two continuation lines. Common layout from upstream tests:
+            //   SFX S Y 1        <- header (count)
+            //   SFX S 0          <- continuation with stripping
+            //   suf .            <- rule body on its own line
+            // Normalize these into a single logical line such as
+            //   SFX S 0 suf .
+            var trimmedCmd = line.TrimStart();
+            if (trimmedCmd.StartsWith("PFX ", StringComparison.OrdinalIgnoreCase) ||
+                trimmedCmd.StartsWith("SFX ", StringComparison.OrdinalIgnoreCase))
+            {
+                var hdrParts = trimmedCmd.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                // If this is a header line (e.g., "SFX X Y 1") then the next lines
+                // contain the actual rule(s). Read the next non-empty, non-comment
+                // line and try to assemble a full rule line.
+                if (hdrParts.Length >= 4 && int.TryParse(hdrParts[3], out _))
+                {
+                    string? nextNonEmpty = null;
+                    while (reader.ReadLine() is { } extra)
+                    {
+                        var t = extra.Trim();
+                        if (string.IsNullOrEmpty(t) || t.StartsWith('#')) continue;
+                        nextNonEmpty = t;
+                        break;
+                    }
+
+                    if (!string.IsNullOrEmpty(nextNonEmpty))
+                    {
+                        // If the continuation line starts with PFX/SFX it may itself
+                        // be a partial "PFX S 0" that needs the following line to form
+                        // a full rule, otherwise it may already be a full rule.
+                        var contTrim = nextNonEmpty.TrimStart();
+                        if (contTrim.StartsWith("PFX ", StringComparison.OrdinalIgnoreCase) || contTrim.StartsWith("SFX ", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var contParts = contTrim.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                            if (contParts.Length >= 4 && !int.TryParse(contParts[3], out _))
+                            {
+                                // continuation is already a full rule line
+                                line = nextNonEmpty;
+                            }
+                            else
+                            {
+                                // continuation seems partial (e.g., "SFX S 0"); read one
+                                // more non-empty line and concatenate as the rule body.
+                                string? ruleBody = null;
+                                while (reader.ReadLine() is { } extra2)
+                                {
+                                    var t2 = extra2.Trim();
+                                    if (string.IsNullOrEmpty(t2) || t2.StartsWith('#')) continue;
+                                    ruleBody = t2;
+                                    break;
+                                }
+
+                                if (!string.IsNullOrEmpty(ruleBody))
+                                {
+                                    line = nextNonEmpty + " " + ruleBody;
+                                }
+                                else
+                                {
+                                    // fallback - use the continuation line as-is
+                                    line = nextNonEmpty;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // nextNonEmpty doesn't start with PFX/SFX: assemble a rule line
+                            // using the header's flag and assumed stripping if not present.
+                            var flag = hdrParts.Length > 1 ? hdrParts[1] : string.Empty;
+                            var strip = hdrParts.Length > 2 ? hdrParts[2] : "0";
+                            line = (hdrParts[0] + " " + flag + " " + strip + " " + nextNonEmpty).TrimEnd();
+                        }
+                    }
+                }
             }
             ProcessAffixLine(line);
         }
@@ -467,10 +550,12 @@ internal sealed class AffixManager : IDisposable
         // The affix token may carry an appended /flag (e.g., "s/Y").
         // Extract only the affix text portion before any slash.
         var affixField = parts[3];
-        var affix = affixField.Split('/', StringSplitOptions.None)[0];
+        var affixParts = affixField.Split('/', StringSplitOptions.None);
+        var affix = affixParts[0];
+        var appendedFlag = affixParts.Length > 1 ? affixParts[1].Trim() : null;
         var condition = parts.Length > 4 ? parts[4] : ".";
 
-        var rule = new AffixRule(flag, stripping, affix, condition, isPrefix);
+        var rule = new AffixRule(flag, stripping, affix, condition, isPrefix, appendedFlag);
 
         if (isPrefix)
         {
@@ -1240,10 +1325,108 @@ internal sealed class AffixManager : IDisposable
             {
                 return true;
             }
-            // If the part can be produced by affix rules (e.g., suffix application), allow it
-            if (CheckAffixedWord(part))
+            // If the part can be produced by affix rules, check the underlying
+            // base that yields this derived form. We only allow the derived form
+            // if the underlying base would be a valid compound-part in this
+            // position — and also enforce simple positional constraints for
+            // prefix/suffix placements (e.g., suffix-derived pieces shouldn't
+            // appear in non-final positions).
+            if (TryFindAffixBase(part, allowBaseOnlyInCompound: true, out var affixBase, out var matchKind, out var appendedFlag))
             {
-                return true;
+                // If the base itself is a small two-word compound, accept it
+                if (affixBase is not null && IsCompoundMadeOfTwoWords(affixBase)) return true;
+
+                // If the original Text 'part' is not a direct dictionary lookup it is
+                // an affix-derived piece. Derivation containing a suffix should not
+                // be used in non-final positions, and derivation containing a
+                // prefix should not be used in non-initial positions.
+                var derived = !_hashManager.Lookup(part);
+                bool hasPrefix = matchKind == AffixMatchKind.PrefixOnly || matchKind == AffixMatchKind.PrefixThenSuffix || matchKind == AffixMatchKind.SuffixThenPrefix;
+                bool hasSuffix = matchKind == AffixMatchKind.SuffixOnly || matchKind == AffixMatchKind.PrefixThenSuffix || matchKind == AffixMatchKind.SuffixThenPrefix;
+
+                if (derived)
+                {
+                    // If the affix rules that produced this derived piece appended a
+                    // COMPOUNDPERMITFLAG then allow positional exceptions. Otherwise
+                    // enforce the default: suffix-derived pieces may not appear in
+                    // non-final positions and prefix-derived pieces may not appear
+                    // in non-initial positions.
+                    var permittedByAffix = false;
+                    if (!string.IsNullOrEmpty(appendedFlag) && !string.IsNullOrEmpty(_compoundPermitFlag))
+                    {
+                        // If any appended flag is present in the COMPOUNDPERMITFLAG set
+                        permittedByAffix = appendedFlag.Any(ch => _compoundPermitFlag.Contains(ch));
+                    }
+
+                    if (endPos < fullWord.Length && hasSuffix && !permittedByAffix)
+                    {
+                        // suffix-based derivations are not allowed when this part is
+                        // not the last element of the compound
+                        return false;
+                    }
+                    if (wordCount > 0 && hasPrefix && !permittedByAffix)
+                    {
+                        // prefix-based derivations are not permitted for non-initial
+                        // components
+                        return false;
+                    }
+                }
+
+                // Validate flags on the underlying baseCandidate. When an affix
+                // produced the derived form, append any 'appendedFlag' characters
+                // from the affix rule and treat those as if they were present
+                // on the derived form; this affects COMPOUNDFLAG/COMPOUNDPERMITFLAG
+                // and COMPOUNDFORBIDFLAG semantics (upstream Hunspell appends
+                // these flags to derived word forms).
+                if (affixBase is null) return false;
+                var baseFlags = _hashManager.GetWordFlags(affixBase);
+                var combinedBaseFlags = (baseFlags ?? string.Empty) + (appendedFlag ?? string.Empty);
+                if (combinedBaseFlags is not null)
+                {
+                    if (wordCount == 0)
+                    {
+                        if (_compoundBegin is not null)
+                        {
+                            if (combinedBaseFlags.Contains(_compoundBegin) || (_compoundFlag is not null && combinedBaseFlags.Contains(_compoundFlag)) || (_onlyInCompound is not null && combinedBaseFlags.Contains(_onlyInCompound))) return true;
+                        }
+                        else if (_compoundFlag is not null)
+                        {
+                            if ((_compoundFlag is not null && combinedBaseFlags.Contains(_compoundFlag)) || (_onlyInCompound is not null && combinedBaseFlags.Contains(_onlyInCompound))) return true;
+                        }
+                    }
+                    else if (endPos < fullWord.Length)
+                    {
+                        if (_compoundMiddle is not null)
+                        {
+                            if (combinedBaseFlags.Contains(_compoundMiddle) || (_compoundFlag is not null && combinedBaseFlags.Contains(_compoundFlag)) || (_onlyInCompound is not null && combinedBaseFlags.Contains(_onlyInCompound))) return true;
+                        }
+                        else if (_compoundFlag is not null)
+                        {
+                            if ((_compoundFlag is not null && combinedBaseFlags.Contains(_compoundFlag)) || (_onlyInCompound is not null && combinedBaseFlags.Contains(_onlyInCompound))) return true;
+                        }
+                    }
+                    else
+                    {
+                        if (_compoundEnd is not null)
+                        {
+                            if (combinedBaseFlags.Contains(_compoundEnd) || (_compoundFlag is not null && combinedBaseFlags.Contains(_compoundFlag)) || (_onlyInCompound is not null && combinedBaseFlags.Contains(_onlyInCompound))) return true;
+                        }
+                        else if (_compoundFlag is not null)
+                        {
+                            if ((_compoundFlag is not null && combinedBaseFlags.Contains(_compoundFlag)) || (_onlyInCompound is not null && combinedBaseFlags.Contains(_onlyInCompound))) return true;
+                        }
+                    }
+                }
+
+                    // Check if the derived form (including appended flags) is marked
+                    // as forbidden to appear inside compounds.
+                    if (!string.IsNullOrEmpty(_compoundForbidFlag) && combinedBaseFlags.Contains(_compoundForbidFlag))
+                    {
+                        return false;
+                    }
+
+                    // Not permitted as a compound part
+                return false;
             }
 
             // If the part can be formed as a valid two-word compound, allow it
@@ -1553,96 +1736,224 @@ internal sealed class AffixManager : IDisposable
     /// and checking if the resulting base exists in the dictionary. This is a
     /// simplified check sufficient for many tests (e.g., SFX 's' forming plurals).
     /// </summary>
-    public bool CheckAffixedWord(string word)
+    public bool CheckAffixedWord(string word, bool allowBaseOnlyInCompound = false)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         if (string.IsNullOrEmpty(word)) return false;
 
-        // Try suffix rules (simple form: remove appended affix and check base root)
-        foreach (var sx in _suffixes)
-        {
-            // sx.Affix is the text appended, stripping indicates string to strip from root
-            if (string.IsNullOrEmpty(sx.Affix)) continue;
-            if (word.EndsWith(sx.Affix, StringComparison.Ordinal))
-            {
-                var baseCandidate = word[..^sx.Affix.Length];
+        // Use the helper that returns the base root candidate when a derivation
+        // is found; this centralizes the logic for nested affix combinations.
+        return TryFindAffixBase(word, allowBaseOnlyInCompound, out _, out _, out _);
+    }
 
-                // If stripping value present and not '0', ensure the base suffix is present
-                if (!string.IsNullOrEmpty(sx.Stripping) && sx.Stripping != "0")
+    /// <summary>
+    /// Try to find a dictionary base candidate that generates the supplied
+    /// word via one or two affix operations (suffix/prefix and prefix/suffix).
+    /// If a base is found, return true and set baseCandidate to the matched
+    /// dictionary root (or the compound base formed by two words).
+    /// </summary>
+    private enum AffixMatchKind { None, PrefixOnly, SuffixOnly, PrefixThenSuffix, SuffixThenPrefix }
+
+    private bool TryFindAffixBase(string word, bool allowBaseOnlyInCompound, out string? baseCandidate, out AffixMatchKind kind, out string? appendedFlag)
+    {
+        baseCandidate = null;
+        kind = AffixMatchKind.None;
+        appendedFlag = null;
+
+        // Helper to join appended flags safely
+        static string ConcatFlags(string? a, string? b)
+            => (a ?? string.Empty) + (b ?? string.Empty);
+
+        // 1) Try suffix-first: word = base + suffix
+        foreach (var sfx in _suffixes)
+        {
+            if (string.IsNullOrEmpty(sfx.Affix)) continue;
+            if (!word.EndsWith(sfx.Affix, StringComparison.Ordinal)) continue;
+
+            var base1 = word.Substring(0, word.Length - sfx.Affix.Length);
+
+            // apply stripping
+            if (!string.IsNullOrEmpty(sfx.Stripping) && sfx.Stripping != "0")
+            {
+                if (base1.EndsWith(sfx.Stripping, StringComparison.Ordinal))
                 {
-                    if (baseCandidate.EndsWith(sx.Stripping, StringComparison.Ordinal))
+                    base1 = base1.Substring(0, base1.Length - sfx.Stripping.Length);
+                }
+                else
+                {
+                    continue;
+                }
+            }
+
+            // condition check
+            if (!string.IsNullOrEmpty(sfx.Condition) && sfx.Condition != ".")
+            {
+                try
+                {
+                    if (!Regex.IsMatch(base1, sfx.Condition + "$", RegexOptions.CultureInvariant)) continue;
+                }
+                catch (ArgumentException)
+                {
+                    continue;
+                }
+            }
+
+            // If base1 is a dictionary word and allowed
+            if (_hashManager.Lookup(base1))
+            {
+                var baseFlags = _hashManager.GetWordFlags(base1);
+                if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseFlags is not null && baseFlags.Contains(_onlyInCompound))
+                {
+                    // base only allowed in compounds and caller disallows it
+                    // try other possibilities
+                }
+                else
+                {
+                    baseCandidate = base1;
+                    kind = AffixMatchKind.SuffixOnly;
+                    appendedFlag = sfx.AppendedFlag;
+                    return true;
+                }
+            }
+
+            // If base1 can be created by combining two dictionary words, accept it
+            if (IsCompoundMadeOfTwoWords(base1))
+            {
+                baseCandidate = base1;
+                kind = AffixMatchKind.SuffixOnly;
+                appendedFlag = sfx.AppendedFlag;
+                return true;
+            }
+
+            // Try stripping a prefix from base1: base1 = prefix + root
+            foreach (var pfx in _prefixes)
+            {
+                if (string.IsNullOrEmpty(pfx.Affix)) continue;
+                if (!base1.StartsWith(pfx.Affix, StringComparison.Ordinal)) continue;
+
+                var base2 = base1.Substring(pfx.Affix.Length);
+
+                if (!string.IsNullOrEmpty(pfx.Stripping) && pfx.Stripping != "0")
+                {
+                    if (base2.StartsWith(pfx.Stripping, StringComparison.Ordinal))
                     {
-                        baseCandidate = baseCandidate[..^sx.Stripping.Length];
+                        base2 = base2.Substring(pfx.Stripping.Length);
                     }
                     else
                     {
-                        // Expected stripping substring not found; cannot apply rule
                         continue;
                     }
                 }
 
-                // If a condition is present, ensure the base candidate satisfies it
-                if (!string.IsNullOrEmpty(sx.Condition) && sx.Condition != ".")
+                if (!string.IsNullOrEmpty(pfx.Condition) && pfx.Condition != ".")
                 {
                     try
                     {
-                        if (!Regex.IsMatch(baseCandidate, sx.Condition + "$", RegexOptions.CultureInvariant))
-                        {
-                            continue; // condition not met
-                        }
+                        if (!Regex.IsMatch(base2, "^" + pfx.Condition, RegexOptions.CultureInvariant)) continue;
                     }
                     catch (ArgumentException)
                     {
-                        // invalid regex in condition - fall back to rejecting this rule
                         continue;
                     }
                 }
 
-                // If the candidate is a dictionary root, the affixed word is valid
-                if (_hashManager.Lookup(baseCandidate))
+                if (_hashManager.Lookup(base2))
                 {
-                    // However, if the base dictionary entry is marked ONLYINCOMPOUND
-                    // then the derived affixed form should NOT be considered valid
-                    // as a standalone word (it is only allowed inside compounds).
-                    if (!string.IsNullOrEmpty(_onlyInCompound))
+                    var baseFlags = _hashManager.GetWordFlags(base2);
+                    if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseFlags is not null && baseFlags.Contains(_onlyInCompound))
                     {
-                        var baseFlags = _hashManager.GetWordFlags(baseCandidate);
-                        if (baseFlags is not null && baseFlags.Contains(_onlyInCompound))
-                        {
-                            // base is only-in-compound; cannot accept affixed standalone form
-                            continue;
-                        }
+                        // not allowed by caller
                     }
-
-                    return true;
+                    else
+                    {
+                        baseCandidate = base2;
+                        kind = AffixMatchKind.SuffixThenPrefix;
+                        appendedFlag = ConcatFlags(sfx.AppendedFlag, pfx.AppendedFlag);
+                        return true;
+                    }
                 }
 
-                // Also allow the base candidate when it is a valid two-word compound
-                if (IsCompoundMadeOfTwoWords(baseCandidate))
+                if (IsCompoundMadeOfTwoWords(base2))
                 {
+                    baseCandidate = base2;
+                    kind = AffixMatchKind.SuffixThenPrefix;
+                    appendedFlag = ConcatFlags(sfx.AppendedFlag, pfx.AppendedFlag);
                     return true;
                 }
-
-                // Do not accept a baseCandidate simply because it's a concatenation
-                // of two dictionary words; compound-inner-boundaries must be
-                // validated by explicit splitting instead.
             }
         }
 
-        // Try prefix rules (mirror logic)
-        foreach (var px in _prefixes)
+        // 2) Try prefix-first: word = prefix + base
+        foreach (var pfx in _prefixes)
         {
-            if (string.IsNullOrEmpty(px.Affix)) continue;
-            if (word.StartsWith(px.Affix, StringComparison.Ordinal))
-            {
-                var baseCandidate = word.Substring(px.Affix.Length);
+            if (string.IsNullOrEmpty(pfx.Affix)) continue;
+            if (!word.StartsWith(pfx.Affix, StringComparison.Ordinal)) continue;
 
-                if (!string.IsNullOrEmpty(px.Stripping) && px.Stripping != "0")
+            var rem = word.Substring(pfx.Affix.Length);
+
+            if (!string.IsNullOrEmpty(pfx.Stripping) && pfx.Stripping != "0")
+            {
+                if (rem.StartsWith(pfx.Stripping, StringComparison.Ordinal))
                 {
-                    if (baseCandidate.StartsWith(px.Stripping, StringComparison.Ordinal))
+                    rem = rem.Substring(pfx.Stripping.Length);
+                }
+                else
+                {
+                    continue;
+                }
+            }
+
+            if (!string.IsNullOrEmpty(pfx.Condition) && pfx.Condition != ".")
+            {
+                try
+                {
+                    if (!Regex.IsMatch(rem, "^" + pfx.Condition, RegexOptions.CultureInvariant)) continue;
+                }
+                catch (ArgumentException)
+                {
+                    continue;
+                }
+            }
+
+            // direct base after prefix
+            if (_hashManager.Lookup(rem))
+            {
+                var baseFlags = _hashManager.GetWordFlags(rem);
+                if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseFlags is not null && baseFlags.Contains(_onlyInCompound))
+                {
+                    // not allowed by caller, continue
+                }
+                else
+                {
+                    baseCandidate = rem;
+                    kind = AffixMatchKind.PrefixOnly;
+                    appendedFlag = pfx.AppendedFlag;
+                    return true;
+                }
+            }
+
+            if (IsCompoundMadeOfTwoWords(rem))
+            {
+                baseCandidate = rem;
+                kind = AffixMatchKind.PrefixOnly;
+                appendedFlag = pfx.AppendedFlag;
+                return true;
+            }
+
+            // try suffix on remainder
+            foreach (var sfx in _suffixes)
+            {
+                if (string.IsNullOrEmpty(sfx.Affix)) continue;
+                if (!rem.EndsWith(sfx.Affix, StringComparison.Ordinal)) continue;
+
+                var base2 = rem.Substring(0, rem.Length - sfx.Affix.Length);
+
+                if (!string.IsNullOrEmpty(sfx.Stripping) && sfx.Stripping != "0")
+                {
+                    if (base2.EndsWith(sfx.Stripping, StringComparison.Ordinal))
                     {
-                        baseCandidate = baseCandidate.Substring(px.Stripping.Length);
+                        base2 = base2.Substring(0, base2.Length - sfx.Stripping.Length);
                     }
                     else
                     {
@@ -1650,14 +1961,11 @@ internal sealed class AffixManager : IDisposable
                     }
                 }
 
-                if (!string.IsNullOrEmpty(px.Condition) && px.Condition != ".")
+                if (!string.IsNullOrEmpty(sfx.Condition) && sfx.Condition != ".")
                 {
                     try
                     {
-                        if (!Regex.IsMatch(baseCandidate, "^" + px.Condition, RegexOptions.CultureInvariant))
-                        {
-                            continue; // condition not met
-                        }
+                        if (!Regex.IsMatch(base2, sfx.Condition + "$", RegexOptions.CultureInvariant)) continue;
                     }
                     catch (ArgumentException)
                     {
@@ -1665,21 +1973,29 @@ internal sealed class AffixManager : IDisposable
                     }
                 }
 
-                if (_hashManager.Lookup(baseCandidate))
+                if (_hashManager.Lookup(base2))
                 {
-                    if (!string.IsNullOrEmpty(_onlyInCompound))
+                    var baseFlags = _hashManager.GetWordFlags(base2);
+                    if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseFlags is not null && baseFlags.Contains(_onlyInCompound))
                     {
-                        var baseFlags = _hashManager.GetWordFlags(baseCandidate);
-                        if (baseFlags is not null && baseFlags.Contains(_onlyInCompound))
-                        {
-                            // don't accept prefix-derived standalone form if base is ONLYINCOMPOUND
-                            continue;
-                        }
+                        // not allowed
                     }
+                    else
+                    {
+                        baseCandidate = base2;
+                        kind = AffixMatchKind.PrefixThenSuffix;
+                        appendedFlag = ConcatFlags(pfx.AppendedFlag, sfx.AppendedFlag);
+                        return true;
+                    }
+                }
 
+                if (IsCompoundMadeOfTwoWords(base2))
+                {
+                    baseCandidate = base2;
+                    kind = AffixMatchKind.PrefixThenSuffix;
+                    appendedFlag = ConcatFlags(pfx.AppendedFlag, sfx.AppendedFlag);
                     return true;
                 }
-                if (IsCompoundMadeOfTwoWords(baseCandidate)) return true;
             }
         }
 
@@ -1837,7 +2153,7 @@ internal sealed class AffixManager : IDisposable
         }
     }
 
-    private record AffixRule(string Flag, string Stripping, string Affix, string Condition, bool IsPrefix);
+    private record AffixRule(string Flag, string Stripping, string Affix, string Condition, bool IsPrefix, string? AppendedFlag);
 
     /// <summary>
     /// Represents a CHECKCOMPOUNDPATTERN rule.
