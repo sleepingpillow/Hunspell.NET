@@ -46,6 +46,7 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("checkcompounddup")]
     [InlineData("checkcompoundtriple")]
     [InlineData("needaffix")]
+    [InlineData("onlyincompound")]
     public void UpstreamAffixCompound_GoodWords_ShouldPass(string baseName)
     {
         var aff = D(baseName, baseName + ".aff");
@@ -91,6 +92,7 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("checkcompounddup")]
     [InlineData("checkcompoundtriple")]
     [InlineData("needaffix")]
+    [InlineData("onlyincompound")]
     public void UpstreamAffixCompound_WrongWords_ShouldFail(string baseName)
     {
         var aff = D(baseName, baseName + ".aff");

@@ -1604,6 +1604,19 @@ internal sealed class AffixManager : IDisposable
                 // If the candidate is a dictionary root, the affixed word is valid
                 if (_hashManager.Lookup(baseCandidate))
                 {
+                    // However, if the base dictionary entry is marked ONLYINCOMPOUND
+                    // then the derived affixed form should NOT be considered valid
+                    // as a standalone word (it is only allowed inside compounds).
+                    if (!string.IsNullOrEmpty(_onlyInCompound))
+                    {
+                        var baseFlags = _hashManager.GetWordFlags(baseCandidate);
+                        if (baseFlags is not null && baseFlags.Contains(_onlyInCompound))
+                        {
+                            // base is only-in-compound; cannot accept affixed standalone form
+                            continue;
+                        }
+                    }
+
                     return true;
                 }
 
@@ -1654,7 +1667,20 @@ internal sealed class AffixManager : IDisposable
                     }
                 }
 
-                if (_hashManager.Lookup(baseCandidate)) return true;
+                if (_hashManager.Lookup(baseCandidate))
+                {
+                    if (!string.IsNullOrEmpty(_onlyInCompound))
+                    {
+                        var baseFlags = _hashManager.GetWordFlags(baseCandidate);
+                        if (baseFlags is not null && baseFlags.Contains(_onlyInCompound))
+                        {
+                            // don't accept prefix-derived standalone form if base is ONLYINCOMPOUND
+                            continue;
+                        }
+                    }
+
+                    return true;
+                }
                 if (IsCompoundMadeOfTwoWords(baseCandidate)) return true;
             }
         }
