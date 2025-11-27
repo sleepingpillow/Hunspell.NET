@@ -645,7 +645,7 @@ namespace Tools.Munch
                             // unit ordinals -> units
                             {"första", "en"}, {"först", "en"}, {"förstA", "en"}, {"andra", "två"}, {"tredje", "tre"}, {"fjärde", "fyra"}, {"femte", "fem"}, {"sjätte", "sex"}, {"sjunde", "sju"}, {"åttonde", "åtta"}, {"åtton", "åtta"}, {"nionde", "nio"}, {"tionde", "tio"},
                             // multiples / scale ordinals -> map back to cardinal scale form
-                            {"hundrade", "hundra"}, {"hundraende", "hundra"}, {"tusende", "tusen"}, {"tusende", "tusen"}, {"miljonte", "miljon"}, {"miljonte", "miljon"}, {"miljonte", "miljon"}
+                            {"hundrade", "hundra"}, {"tusende", "tusen"}, {"miljonte", "miljon"}
                         };
 
                         foreach (var kv in ordSuffixMap.OrderByDescending(e => e.Key.Length))

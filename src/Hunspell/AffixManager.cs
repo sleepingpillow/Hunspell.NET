@@ -600,7 +600,6 @@ internal sealed class AffixManager : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-            if (word == "foofoobar" || word == "fojtófa" || word == "BAZfoo") { /* debug trace removed */ }
         // If COMPOUNDRULE is defined, use it for compound checking
         if (_compoundRules.Count > 0)
         {
@@ -1175,7 +1174,6 @@ internal sealed class AffixManager : IDisposable
         for (int i = position + _compoundMin; i <= word.Length; i++)
         {
             var part = word.Substring(position, i - position);
-            if (word == "foofoobar" || word == "fojtófa" || word == "BAZfoo") { /* debug trace removed */ }
 
             // Check if this part is valid for its position in the compound
             if (!IsValidCompoundPart(part, wordCount, position, i, word))
