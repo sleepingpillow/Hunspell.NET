@@ -92,7 +92,7 @@ public sealed class HunspellSpellChecker : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(word);
 
         var suggestions = new List<string>();
-        
+
         // If the word is correctly spelled, no suggestions needed
         if (Spell(word))
         {
