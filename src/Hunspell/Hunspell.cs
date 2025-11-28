@@ -47,51 +47,73 @@ public sealed class HunspellSpellChecker : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentException.ThrowIfNullOrWhiteSpace(word);
 
-        // First check if it's in the dictionary
-            if (_hashManager == null) { /* no dictionary */ }
-        if (_hashManager?.Lookup(word) ?? false)
+        // Helper that performs the normal lookup/affix/compound checks for a single word
+        bool CheckWord(string w)
         {
-            // If the word is marked as FORBIDDENWORD in the dictionary or via
-            // derived affix flags, it must be rejected.
-                if (_affixManager?.IsForbiddenWord(word) ?? false)
+            // First check if it's in the dictionary
+            if (_hashManager == null) { /* no dictionary */ }
+            if (_hashManager?.Lookup(w) ?? false)
+            {
+                // If the word is marked as FORBIDDENWORD in the dictionary or via
+                // derived affix flags, it must be rejected.
+                if (_affixManager?.IsForbiddenWord(w) ?? false)
                 {
                     return false;
                 }
-            // Check if the word is marked as ONLYINCOMPOUND
-            // If so, it's only valid inside compounds, not standalone
-            if (_affixManager?.IsOnlyInCompound(word) ?? false)
-            {
-                return false;
+                // Check if the word is marked as ONLYINCOMPOUND
+                // If so, it's only valid inside compounds, not standalone
+                if (_affixManager?.IsOnlyInCompound(w) ?? false)
+                {
+                    return false;
+                }
+                // If this dictionary entry requires an affix (NEEDAFFIX), a bare
+                // dictionary form should not be accepted by itself.
+                if (_affixManager?.RequiresAffix(w) ?? false)
+                {
+                    return false;
+                }
+                return true;
             }
-            // If this dictionary entry requires an affix (NEEDAFFIX), a bare
-            // dictionary form should not be accepted by itself.
-            if (_affixManager?.RequiresAffix(word) ?? false)
+
+            // If it's an affix-derived form (e.g., foos from foo + SFX 's'), accept it
+            if (_affixManager?.CheckAffixedWord(w) ?? false)
             {
-                return false;
+                // Accept affixed-derived forms only when they're not forbidden by flags
+                if (_affixManager?.IsForbiddenWord(w) ?? false)
+                {
+                    return false;
+                }
+                return true;
             }
-            return true;
+
+            // Check if word can be broken at break points and all parts are valid
+            if (_affixManager?.CheckBreak(w) ?? false)
+            {
+                return true;
+            }
+
+            // If not found, check if it's a valid compound word
+            return _affixManager?.CheckCompound(w) ?? false;
         }
 
-        // If it's an affix-derived form (e.g., foos from foo + SFX 's'), accept it
-            if (_affixManager?.CheckAffixedWord(word) ?? false)
+        // Try the original word first
+        if (CheckWord(word)) return true;
+
+        // The exact (unsuccessful) checks above can sometimes fail due to
+        // trailing punctuation (e.g. "etc.", "HUNSPELL..."). Upstream Hunspell
+        // treats many trailing dots as sentence punctuation and still accepts
+        // the base word — try stripping trailing '.' characters and re-run
+        // the same checks.
+        // Note: we intentionally only trim '.' here to avoid accidentally
+        // transforming other meaningful characters that may belong to words
+        // (e.g. inner dots in 'OpenOffice.org').
+        var trimmed = word.TrimEnd('.');
+        if (!string.Equals(trimmed, word, StringComparison.Ordinal))
         {
-            // Accept affixed-derived forms only when they're not forbidden by flags
-            if (_affixManager?.IsForbiddenWord(word) ?? false)
-            {
-                return false;
-            }
-            return true;
+            if (CheckWord(trimmed)) return true;
         }
 
-        // Check if word can be broken at break points and all parts are valid
-        if (_affixManager?.CheckBreak(word) ?? false)
-        {
-            return true;
-        }
-
-        // If not found, check if it's a valid compound word
-        var compoundOk = _affixManager?.CheckCompound(word) ?? false;
-        return compoundOk;
+        return false;
 
     }
 

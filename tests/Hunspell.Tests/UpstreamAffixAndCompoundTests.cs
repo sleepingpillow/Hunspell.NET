@@ -49,7 +49,7 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("compoundflag")]
     [InlineData("forceucase")]
     [InlineData("fullstrip")]
-    
+
     [InlineData("break/basic")]
     [InlineData("checkcompoundrep/basic")]
     [InlineData("checkcompoundpattern/basic")]
@@ -60,6 +60,8 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("checkcompoundtriple")]
     [InlineData("needaffix")]
     [InlineData("onlyincompound")]
+    [InlineData("base")]
+    [InlineData("base_utf")]
     public void UpstreamAffixCompound_GoodWords_ShouldPass(string baseName)
     {
         var aff = D(baseName, baseName + ".aff");
@@ -117,6 +119,8 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("checkcompoundtriple")]
     [InlineData("needaffix")]
     [InlineData("onlyincompound")]
+    [InlineData("base")]
+    [InlineData("base_utf")]
     public void UpstreamAffixCompound_WrongWords_ShouldFail(string baseName)
     {
         var aff = D(baseName, baseName + ".aff");

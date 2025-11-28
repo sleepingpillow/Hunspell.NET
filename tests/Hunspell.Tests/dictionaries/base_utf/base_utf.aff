@@ -1,0 +1,35 @@
+ # OpenOffice.org’s en_US.aff file (UTF-8 variant)
+
+ SET UTF-8
+ TRY
+ esianrtolcdugmphbyfvkwzESIANRTOLCDUGMPHBYFVKWZ'
+
+ MAXNGRAMSUGS 1
+ WORDCHARS .'’
+
+ PFX A Y 1
+ PFX A   0     re         .
+
+ PFX I Y 1
+ PFX I   0     in         .
+
+ PFX U Y 1
+ PFX U   0     un         .
+
+ PFX C Y 1
+ PFX C   0     de          .
+
+ PFX E Y 1
+ PFX E   0     dis         .
+
+ PFX F Y 1
+ PFX F   0     con         .
+
+ PFX K Y 1
+ PFX K   0     pro         .
+
+ SFX M Y 1
+ SFX M   0     's         .
+
+ REP 88
+ # (truncated - includes many replacement patterns similar to base.aff)
