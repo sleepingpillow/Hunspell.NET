@@ -1,0 +1,5 @@
+SET UTF-8
+
+# maputf example — mapsensitive test
+TRY abcdefghijklmnopqrstuvwxyz
+MAP aá

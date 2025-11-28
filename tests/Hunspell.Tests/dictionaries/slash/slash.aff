@@ -1,0 +1,4 @@
+SET UTF-8
+
+# simple file to ensure slashes in words are handled
+TRY abcdefghijklmnopqrstuvwxyz

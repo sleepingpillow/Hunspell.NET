@@ -72,8 +72,13 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("ph")]
     [InlineData("sug")]
     [InlineData("sug2")]
-    [InlineData("sugutf")]
+    [InlineData("ph2")]
+    [InlineData("maputf")]
+    [InlineData("reputf")]
     [InlineData("wordpair")]
+    [InlineData("slash")]
+    [InlineData("ignore")]
+    [InlineData("ignoreutf")]
     public void UpstreamAffixCompound_GoodWords_ShouldPass(string baseName)
     {
         var aff = D(baseName, baseName + ".aff");
@@ -139,12 +144,17 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("keepcase")]
     [InlineData("dotless_i")]
     [InlineData("map")]
-    [InlineData("sugutf")]
     [InlineData("phone")]
     [InlineData("ph")]
     [InlineData("sug")]
     [InlineData("sug2")]
-    [InlineData("wordpair")]
+    [InlineData("sugutf")]
+    [InlineData("ph2")]
+    [InlineData("maputf")]
+    [InlineData("reputf")]
+    [InlineData("slash")]
+    [InlineData("ignore")]
+    [InlineData("ignoreutf")]
     public void UpstreamAffixCompound_WrongWords_ShouldFail(string baseName)
     {
         var aff = D(baseName, baseName + ".aff");

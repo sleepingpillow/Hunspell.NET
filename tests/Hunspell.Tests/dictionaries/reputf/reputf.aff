@@ -1,0 +1,5 @@
+SET UTF-8
+
+# reputf: REP entry related tests
+REP ph f
+TRY abcdefghijklmnopqrstuvwxyz

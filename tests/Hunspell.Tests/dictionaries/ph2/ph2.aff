@@ -1,0 +1,4 @@
+SET UTF-8
+
+# ph2: additional phone/ph variants
+TRY abcdefghijklmnopqrstuvwxyz
