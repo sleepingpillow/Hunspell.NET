@@ -92,7 +92,7 @@ public sealed class HunspellSpellChecker : IDisposable
         // If not found, check if it's a valid compound word
         var compoundOk = _affixManager?.CheckCompound(word) ?? false;
         return compoundOk;
-        
+
     }
 
     /// <summary>

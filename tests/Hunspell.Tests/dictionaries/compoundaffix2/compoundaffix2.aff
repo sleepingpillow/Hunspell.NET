@@ -2,7 +2,7 @@ COMPOUNDFLAG X
 COMPOUNDPERMITFLAG Y
 
 PFX P Y 1
-PFX P   0     pre/Y        
+PFX P   0     pre/Y
 .
 
 SFX S Y 1

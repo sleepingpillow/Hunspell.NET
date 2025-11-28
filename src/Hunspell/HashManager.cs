@@ -35,7 +35,7 @@ internal sealed class HashManager : IDisposable
 
         using var stream = File.OpenRead(dictionaryPath);
         using var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-        
+
         // First line typically contains the word count
         var firstLine = reader.ReadLine();
         if (firstLine is null)
@@ -82,7 +82,45 @@ internal sealed class HashManager : IDisposable
     public bool Lookup(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return _words.ContainsKey(word) || _runtimeWords.Contains(word);
+        // Runtime words are stored case-insensitively and should match directly
+        if (_runtimeWords.Contains(word)) return true;
+
+        // _words uses a case-insensitive key comparison. Use TryGetValue to
+        // retrieve all variants for the surface form and then decide whether
+        // a match should be allowed based on exact-case or permissive rules.
+        if (!_words.TryGetValue(word, out var entries)) return false;
+
+        // If an exact-case variant exists, accept it immediately
+        if (entries.Any(e => string.Equals(e.Word, word, StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        // Otherwise, apply a refined case-handling rule set:
+        // - If the dictionary has a lower-case variant, allow case-insensitive matches.
+        // - If the dictionary has an all-upper variant (acronym), accept only ALL-UPPER words.
+        // - If the dictionary has mixed-case variants (e.g., OpenOffice.org), accept
+        //   only exact-case or the ALL-UPPER variant (OpenOffice.org -> OPENOFFICE.ORG).
+        bool hasAllLower = entries.Any(e => e.Word == e.Word.ToLowerInvariant());
+        if (hasAllLower) return true;
+
+        bool hasAllUpper = entries.Any(e => e.Word == e.Word.ToUpperInvariant());
+        bool hasMixed = entries.Any(e => !(e.Word == e.Word.ToUpperInvariant() || e.Word == e.Word.ToLowerInvariant()));
+
+        // If dictionary contains an all-upper entry, accept only all-upper input
+        if (hasAllUpper && string.Equals(word, word.ToUpperInvariant(), StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        // If dictionary contains a mixed-case entry, accept its all-upper variant
+        // (e.g., OPENOFFICE.ORG for OpenOffice.org) but not arbitrary case changes.
+        if (hasMixed && entries.Any(e => string.Equals(e.Word.ToUpperInvariant(), word, StringComparison.Ordinal)))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     public bool Add(string word)
@@ -111,7 +149,7 @@ internal sealed class HashManager : IDisposable
     public string? GetWordFlags(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        
+
         if (_words.TryGetValue(word, out var entries))
         {
             // Return the union of all flags across homonym entries. This keeps
@@ -129,7 +167,7 @@ internal sealed class HashManager : IDisposable
             }
             return string.Concat(set);
         }
-        
+
         // Runtime words have no flags
         return _runtimeWords.Contains(word) ? string.Empty : null;
     }

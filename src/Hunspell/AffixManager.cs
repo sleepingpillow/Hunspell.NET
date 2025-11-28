@@ -1875,29 +1875,30 @@ internal sealed class AffixManager : IDisposable
         foreach (var sfx in _suffixes)
         {
             if (string.IsNullOrEmpty(sfx.Affix)) continue;
-            if (!word.EndsWith(sfx.Affix, StringComparison.Ordinal)) continue;
+            // Allow affix matching to succeed regardless of case. Hunspell
+            // treats affix matching in a case-insensitive manner for suffixes
+            // like "'s" so we must accept "'S" as well.
+            if (!word.EndsWith(sfx.Affix, StringComparison.OrdinalIgnoreCase)) continue;
 
             var base1 = word.Substring(0, word.Length - sfx.Affix.Length);
 
-            // apply stripping
+            // Build the candidate base by *adding* the stripping text back on.
+            // Hunspell suffix rules are applied to the original base where the
+            // stripped text is part of the dictionary entry. When validating a
+            // given word we compute baseWithoutSuffix (base1) and reconstruct the
+            // dictionary candidate as base1 + stripping (unless stripping is 0).
+            var reconstructedBase = base1;
             if (!string.IsNullOrEmpty(sfx.Stripping) && sfx.Stripping != "0")
             {
-                if (base1.EndsWith(sfx.Stripping, StringComparison.Ordinal))
-                {
-                    base1 = base1.Substring(0, base1.Length - sfx.Stripping.Length);
-                }
-                else
-                {
-                    continue;
-                }
+                reconstructedBase = base1 + sfx.Stripping;
             }
 
-            // condition check
+            // condition check (match against the reconstructed dictionary base)
             if (!string.IsNullOrEmpty(sfx.Condition) && sfx.Condition != ".")
             {
                 try
                 {
-                    if (!Regex.IsMatch(base1, sfx.Condition + "$", RegexOptions.CultureInvariant)) continue;
+                    if (!Regex.IsMatch(reconstructedBase, sfx.Condition + "$", RegexOptions.CultureInvariant)) continue;
                 }
                 catch (ArgumentException)
                 {
@@ -1905,10 +1906,10 @@ internal sealed class AffixManager : IDisposable
                 }
             }
 
-            // If base1 is a dictionary word and allowed
-            if (_hashManager.Lookup(base1))
+            // If reconstructed base is a dictionary word and allowed
+            if (_hashManager.Lookup(reconstructedBase))
             {
-                var baseVariants = _hashManager.GetWordFlagVariants(base1).ToList();
+                var baseVariants = _hashManager.GetWordFlagVariants(reconstructedBase).ToList();
                 if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
                 {
                     // base only allowed in compounds and caller disallows it
@@ -1916,7 +1917,9 @@ internal sealed class AffixManager : IDisposable
                 }
                 else
                 {
-                    baseCandidate = base1;
+                    // Return the reconstructed dictionary base as the matched
+                    // baseCandidate so callers can inspect the origin.
+                    baseCandidate = reconstructedBase;
                     kind = AffixMatchKind.SuffixOnly;
                     appendedFlag = sfx.AppendedFlag;
                     return true;
@@ -1924,39 +1927,72 @@ internal sealed class AffixManager : IDisposable
             }
 
             // If base1 can be created by combining two dictionary words, accept it
-            if (IsCompoundMadeOfTwoWords(base1, out _, out _))
-            {
-                baseCandidate = base1;
-                kind = AffixMatchKind.SuffixOnly;
-                appendedFlag = sfx.AppendedFlag;
-                return true;
-            }
+            if (IsCompoundMadeOfTwoWords(reconstructedBase, out _, out _))
+                {
+                    baseCandidate = reconstructedBase;
+                    kind = AffixMatchKind.SuffixOnly;
+                    appendedFlag = sfx.AppendedFlag;
+                    return true;
+                }
 
             // Try stripping a prefix from base1: base1 = prefix + root
+            // Also handle the case where two suffixes were applied in sequence
+            // (e.g., word = base + s2 + s1). If so, base1 will end with the
+            // earlier suffix and we should try to remove that suffix and
+            // reconstruct the true dictionary base.
+            foreach (var s2 in _suffixes)
+            {
+                if (string.IsNullOrEmpty(s2.Affix)) continue;
+                if (!base1.EndsWith(s2.Affix, StringComparison.OrdinalIgnoreCase)) continue;
+
+                var base2Candidate = base1.Substring(0, base1.Length - s2.Affix.Length);
+
+                var reconstructedDouble = base2Candidate;
+                if (!string.IsNullOrEmpty(s2.Stripping) && s2.Stripping != "0")
+                {
+                    reconstructedDouble = base2Candidate + s2.Stripping;
+                }
+
+                // check whether reconstructedDouble corresponds to a dictionary word
+                if (_hashManager.Lookup(reconstructedDouble))
+                {
+                    baseCandidate = reconstructedDouble;
+                    kind = AffixMatchKind.SuffixOnly; // effectively two suffixes
+                    appendedFlag = ConcatFlags(s2.AppendedFlag, sfx.AppendedFlag);
+                    return true;
+                }
+
+                if (IsCompoundMadeOfTwoWords(reconstructedDouble, out _, out _))
+                {
+                    baseCandidate = reconstructedDouble;
+                    kind = AffixMatchKind.SuffixOnly;
+                    appendedFlag = ConcatFlags(s2.AppendedFlag, sfx.AppendedFlag);
+                    return true;
+                }
+            }
             foreach (var pfx in _prefixes)
             {
                 if (string.IsNullOrEmpty(pfx.Affix)) continue;
-                if (!base1.StartsWith(pfx.Affix, StringComparison.Ordinal)) continue;
 
-                var base2 = base1.Substring(pfx.Affix.Length);
+                // Attempt to interpret baseCandidate as having had a prefix
+                // applied originally. If so, the original dictionary base would
+                // be formed by removing the prefix affix and then *adding back*
+                // any prefix-stripping text.
+                if (!reconstructedBase.StartsWith(pfx.Affix, StringComparison.OrdinalIgnoreCase)) continue;
 
+                var inner = reconstructedBase.Substring(pfx.Affix.Length);
+
+                var nestedCandidate = inner;
                 if (!string.IsNullOrEmpty(pfx.Stripping) && pfx.Stripping != "0")
                 {
-                    if (base2.StartsWith(pfx.Stripping, StringComparison.Ordinal))
-                    {
-                        base2 = base2.Substring(pfx.Stripping.Length);
-                    }
-                    else
-                    {
-                        continue;
-                    }
+                    nestedCandidate = pfx.Stripping + inner;
                 }
 
                 if (!string.IsNullOrEmpty(pfx.Condition) && pfx.Condition != ".")
                 {
                     try
                     {
-                        if (!Regex.IsMatch(base2, "^" + pfx.Condition, RegexOptions.CultureInvariant)) continue;
+                        if (!Regex.IsMatch(nestedCandidate, "^" + pfx.Condition, RegexOptions.CultureInvariant)) continue;
                     }
                     catch (ArgumentException)
                     {
@@ -1964,25 +2000,25 @@ internal sealed class AffixManager : IDisposable
                     }
                 }
 
-                if (_hashManager.Lookup(base2))
+                if (_hashManager.Lookup(nestedCandidate))
                 {
-                    var baseVariants = _hashManager.GetWordFlagVariants(base2).ToList();
+                    var baseVariants = _hashManager.GetWordFlagVariants(nestedCandidate).ToList();
                     if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
                     {
                         // not allowed by caller
                     }
                     else
                     {
-                        baseCandidate = base2;
+                        baseCandidate = nestedCandidate;
                         kind = AffixMatchKind.SuffixThenPrefix;
                         appendedFlag = ConcatFlags(sfx.AppendedFlag, pfx.AppendedFlag);
                         return true;
                     }
                 }
 
-                if (IsCompoundMadeOfTwoWords(base2, out _, out _))
+                if (IsCompoundMadeOfTwoWords(nestedCandidate, out _, out _))
                 {
-                    baseCandidate = base2;
+                    baseCandidate = nestedCandidate;
                     kind = AffixMatchKind.SuffixThenPrefix;
                     appendedFlag = ConcatFlags(sfx.AppendedFlag, pfx.AppendedFlag);
                     return true;
@@ -1994,27 +2030,24 @@ internal sealed class AffixManager : IDisposable
         foreach (var pfx in _prefixes)
         {
             if (string.IsNullOrEmpty(pfx.Affix)) continue;
-            if (!word.StartsWith(pfx.Affix, StringComparison.Ordinal)) continue;
+            if (!word.StartsWith(pfx.Affix, StringComparison.OrdinalIgnoreCase)) continue;
 
             var rem = word.Substring(pfx.Affix.Length);
 
+            // Reconstruct the possible dictionary base by prepending the prefix
+            // stripping string (if present). The base candidate is what would
+            // have been present in the dictionary before the prefix was applied.
+            var baseCandidateFromPrefix = rem;
             if (!string.IsNullOrEmpty(pfx.Stripping) && pfx.Stripping != "0")
             {
-                if (rem.StartsWith(pfx.Stripping, StringComparison.Ordinal))
-                {
-                    rem = rem.Substring(pfx.Stripping.Length);
-                }
-                else
-                {
-                    continue;
-                }
+                baseCandidateFromPrefix = pfx.Stripping + rem;
             }
 
             if (!string.IsNullOrEmpty(pfx.Condition) && pfx.Condition != ".")
             {
                 try
                 {
-                    if (!Regex.IsMatch(rem, "^" + pfx.Condition, RegexOptions.CultureInvariant)) continue;
+                    if (!Regex.IsMatch(baseCandidateFromPrefix, "^" + pfx.Condition, RegexOptions.CultureInvariant)) continue;
                 }
                 catch (ArgumentException)
                 {
@@ -2023,25 +2056,25 @@ internal sealed class AffixManager : IDisposable
             }
 
             // direct base after prefix
-            if (_hashManager.Lookup(rem))
+            if (_hashManager.Lookup(baseCandidateFromPrefix))
             {
-                var baseVariants = _hashManager.GetWordFlagVariants(rem).ToList();
+                var baseVariants = _hashManager.GetWordFlagVariants(baseCandidateFromPrefix).ToList();
                 if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
                 {
                     // not allowed by caller, continue
                 }
                 else
                 {
-                    baseCandidate = rem;
+                    baseCandidate = baseCandidateFromPrefix;
                     kind = AffixMatchKind.PrefixOnly;
                     appendedFlag = pfx.AppendedFlag;
                     return true;
                 }
             }
 
-            if (IsCompoundMadeOfTwoWords(rem, out _, out _))
+            if (IsCompoundMadeOfTwoWords(baseCandidateFromPrefix, out _, out _))
             {
-                baseCandidate = rem;
+                baseCandidate = baseCandidateFromPrefix;
                 kind = AffixMatchKind.PrefixOnly;
                 appendedFlag = pfx.AppendedFlag;
                 return true;
@@ -2051,27 +2084,23 @@ internal sealed class AffixManager : IDisposable
             foreach (var sfx in _suffixes)
             {
                 if (string.IsNullOrEmpty(sfx.Affix)) continue;
-                if (!rem.EndsWith(sfx.Affix, StringComparison.Ordinal)) continue;
+                if (!rem.EndsWith(sfx.Affix, StringComparison.OrdinalIgnoreCase)) continue;
 
                 var base2 = rem.Substring(0, rem.Length - sfx.Affix.Length);
 
+                // Reconstruct the original dictionary base by appending the
+                // suffix stripping string back onto the remainder (base2).
+                var baseCandidate2 = base2;
                 if (!string.IsNullOrEmpty(sfx.Stripping) && sfx.Stripping != "0")
                 {
-                    if (base2.EndsWith(sfx.Stripping, StringComparison.Ordinal))
-                    {
-                        base2 = base2.Substring(0, base2.Length - sfx.Stripping.Length);
-                    }
-                    else
-                    {
-                        continue;
-                    }
+                    baseCandidate2 = base2 + sfx.Stripping;
                 }
 
                 if (!string.IsNullOrEmpty(sfx.Condition) && sfx.Condition != ".")
                 {
                     try
                     {
-                        if (!Regex.IsMatch(base2, sfx.Condition + "$", RegexOptions.CultureInvariant)) continue;
+                        if (!Regex.IsMatch(baseCandidate2, sfx.Condition + "$", RegexOptions.CultureInvariant)) continue;
                     }
                     catch (ArgumentException)
                     {
@@ -2079,25 +2108,25 @@ internal sealed class AffixManager : IDisposable
                     }
                 }
 
-                if (_hashManager.Lookup(base2))
+                if (_hashManager.Lookup(baseCandidate2))
                 {
-                    var baseVariants = _hashManager.GetWordFlagVariants(base2).ToList();
+                    var baseVariants = _hashManager.GetWordFlagVariants(baseCandidate2).ToList();
                     if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
                     {
                         // not allowed
                     }
                     else
                     {
-                        baseCandidate = base2;
+                        baseCandidate = baseCandidate2;
                         kind = AffixMatchKind.PrefixThenSuffix;
                         appendedFlag = ConcatFlags(pfx.AppendedFlag, sfx.AppendedFlag);
                         return true;
                     }
                 }
 
-                if (IsCompoundMadeOfTwoWords(base2, out _, out _))
+                if (IsCompoundMadeOfTwoWords(baseCandidate2, out _, out _))
                 {
-                    baseCandidate = base2;
+                    baseCandidate = baseCandidate2;
                     kind = AffixMatchKind.PrefixThenSuffix;
                     appendedFlag = ConcatFlags(pfx.AppendedFlag, sfx.AppendedFlag);
                     return true;
