@@ -708,7 +708,7 @@ internal sealed class AffixManager : IDisposable
         }
 
         // Try to split the word into valid compound parts
-        bool result = CheckCompoundRecursive(word, 0, 0, null, 0);
+        bool result = CheckCompoundRecursive(word, 0, 0, null, 0, false);
 
         if (result && _checkCompoundRep)
         {
@@ -1217,9 +1217,9 @@ internal sealed class AffixManager : IDisposable
     /// <summary>
     /// Recursively check if a word can be split into valid compound parts.
     /// </summary>
-    private bool CheckCompoundRecursive(string word, int wordCount, int position, string? previousPart, int syllableCount)
+    private bool CheckCompoundRecursive(string word, int wordCount, int position, string? previousPart, int syllableCount, bool requiresForceUCase)
     {
-        // If we've consumed the entire word, we have a valid compound
+            // If we've consumed the entire word, we have a valid compound
         if (position >= word.Length)
         {
             // Check if we're within the maximum word count limit
@@ -1241,6 +1241,14 @@ internal sealed class AffixManager : IDisposable
             {
                 // matched
             }
+            // If FORCEUCASE was required by any component then the final word
+            // should have an upper-case initial letter; otherwise reject.
+            if (ok && requiresForceUCase)
+            {
+                // DEBUG: log compound acceptance decision for force-u case
+                // Final compound acceptance decision: ensure final-case constraints are met
+                if (string.IsNullOrEmpty(word) || !char.IsUpper(word[0])) return false;
+            }
             return ok;
         }
 
@@ -1261,7 +1269,7 @@ internal sealed class AffixManager : IDisposable
             var part = word.Substring(position, i - position);
 
             // Check if this part is valid for its position in the compound
-            if (!IsValidCompoundPart(part, wordCount, position, i, word))
+            if (!IsValidCompoundPart(part, wordCount, position, i, word, out var partRequiresForce))
             {
                 continue;
             }
@@ -1279,9 +1287,26 @@ internal sealed class AffixManager : IDisposable
             // If this part is itself a valid two-word compound, it contributes
             // two components to the overall word count (so enforce COMPOUNDWORDMAX
             // correctly). Otherwise it contributes a single component.
-            var contribution = IsCompoundMadeOfTwoWords(part) ? 2 : 1;
-            if (CheckCompoundRecursive(word, wordCount + contribution, i, part, syllableCount + partSyllables))
+            var contribution = 1;
+            if (IsCompoundMadeOfTwoWords(part, out var aInnerForce, out var bInnerForce))
             {
+                contribution = 2;
+                // Only propagate a/b inner force when those inner components are at
+                // the edges of the full word where FORCEUCASE actually applies.
+                // aInnerForce applies to the first subcomponent of 'part' (absolute
+                // position = position). bInnerForce applies to the second subcomponent
+                // of 'part' (absolute position ends at i). FORCEUCASE should be
+                // propagated only when that subcomponent is at the beginning or the
+                // end of the ENTIRE word respectively.
+                if ((aInnerForce && position == 0) || (bInnerForce && i == word.Length))
+                {
+                    partRequiresForce = true;
+                }
+            }
+            // Propagate whether any component required FORCEUCASE
+            if (CheckCompoundRecursive(word, wordCount + contribution, i, part, syllableCount + partSyllables, requiresForceUCase || partRequiresForce))
+            {
+                // Accepting decomposition at split {i}
                 return true;
             }
         }
@@ -1292,8 +1317,9 @@ internal sealed class AffixManager : IDisposable
     /// <summary>
     /// Check if a word part is valid for its position in the compound.
     /// </summary>
-    private bool IsValidCompoundPart(string part, int wordCount, int startPos, int endPos, string fullWord)
+    private bool IsValidCompoundPart(string part, int wordCount, int startPos, int endPos, string fullWord, out bool requiresForceUCase)
     {
+        requiresForceUCase = false;
         // Must meet minimum length
         if (part.Length < _compoundMin)
         {
@@ -1334,7 +1360,11 @@ internal sealed class AffixManager : IDisposable
             if (TryFindAffixBase(part, allowBaseOnlyInCompound: true, out var affixBase, out var matchKind, out var appendedFlag))
             {
                 // If the base itself is a small two-word compound, accept it
-                if (affixBase is not null && IsCompoundMadeOfTwoWords(affixBase)) return true;
+                if (affixBase is not null && IsCompoundMadeOfTwoWords(affixBase, out var aInnerAffix, out var bInnerAffix))
+                {
+                    if ((aInnerAffix && wordCount == 0) || (bInnerAffix && endPos == fullWord.Length)) requiresForceUCase = true;
+                    return true;
+                }
 
                 // If the original Text 'part' is not a direct dictionary lookup it is
                 // an affix-derived piece. Derivation containing a suffix should not
@@ -1383,6 +1413,13 @@ internal sealed class AffixManager : IDisposable
                 var combinedBaseFlags = (baseFlags ?? string.Empty) + (appendedFlag ?? string.Empty);
                 if (combinedBaseFlags is not null)
                 {
+                    // mark if derived variant(s) require FORCEUCASE — only apply when
+                    // the derived piece occupies an edge position of the full word
+                    // (first or last); middle pieces shouldn't force capitalization
+                    if (!string.IsNullOrEmpty(_forceUCaseFlag) && combinedBaseFlags.Contains(_forceUCaseFlag) && (wordCount == 0 || endPos == fullWord.Length))
+                    {
+                        requiresForceUCase = true;
+                    }
                     if (wordCount == 0)
                     {
                         if (_compoundBegin is not null)
@@ -1430,8 +1467,9 @@ internal sealed class AffixManager : IDisposable
             }
 
             // If the part can be formed as a valid two-word compound, allow it
-            if (IsCompoundMadeOfTwoWords(part))
+            if (IsCompoundMadeOfTwoWords(part, out var aInnerPart, out var bInnerPart))
             {
+                if ((aInnerPart && wordCount == 0) || (bInnerPart && endPos == fullWord.Length)) requiresForceUCase = true;
                 return true;
             }
 
@@ -1439,20 +1477,36 @@ internal sealed class AffixManager : IDisposable
         }
 
         // Check position-specific flags
+        // When a surface-form has multiple homonym variants in the dictionary
+        // (e.g., foo/S and foo/YX) we must accept the part when at least one
+        // variant meets the position requirements and is not forbidden. A
+        // variant that contains COMPOUNDFORBIDFLAG or FORBIDDENWORD must not be
+        // used for compounds.
+        var variants = _hashManager.GetWordFlagVariants(lookUpPart).ToList();
+        if (!string.IsNullOrEmpty(_forceUCaseFlag) && (wordCount == 0 || endPos == fullWord.Length) && variants.Any(v => !string.IsNullOrEmpty(v) && v.Contains(_forceUCaseFlag)))
+        {
+            requiresForceUCase = true;
+            // Part requires FORCEUCASE based on variant flags
+        }
         if (wordCount == 0)
         {
-            // First word in compound: require either the compound-begin flag (if defined)
-            // or the generic compound flag (if defined).
+            // First word in compound: accept if there exists a variant that has
+            // the position-specific flag (compound-begin) or the generic
+            // compound flag, and that variant is not forbidden or marked
+            // COMPOUNDFORBIDFLAG.
             if (_compoundBegin is not null)
             {
-                if (!flags.Contains(_compoundBegin) && (_compoundFlag is null || !flags.Contains(_compoundFlag)) && (_onlyInCompound is null || !flags.Contains(_onlyInCompound)))
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) &&
+                                       (v.Contains(_compoundBegin) || (_compoundFlag is not null && v.Contains(_compoundFlag)) || (_onlyInCompound is not null && v.Contains(_onlyInCompound))) &&
+                                       !(!string.IsNullOrEmpty(_compoundForbidFlag) && v.Contains(_compoundForbidFlag)) &&
+                                       !(!string.IsNullOrEmpty(_forbiddenWordFlag) && v.Contains(_forbiddenWordFlag))))
                 {
                     return false;
                 }
             }
             else if (_compoundFlag is not null)
             {
-                if (!flags.Contains(_compoundFlag) && (_onlyInCompound is null || !flags.Contains(_onlyInCompound))) return false;
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (v.Contains(_compoundFlag) || (_onlyInCompound is not null && v.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && v.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && v.Contains(_forbiddenWordFlag)))) return false;
             }
         }
         else if (endPos < fullWord.Length)
@@ -1461,14 +1515,14 @@ internal sealed class AffixManager : IDisposable
             // or the generic compound flag (if defined).
             if (_compoundMiddle is not null)
             {
-                if (!flags.Contains(_compoundMiddle) && (_compoundFlag is null || !flags.Contains(_compoundFlag)) && (_onlyInCompound is null || !flags.Contains(_onlyInCompound)))
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (v.Contains(_compoundMiddle) || (_compoundFlag is not null && v.Contains(_compoundFlag)) || (_onlyInCompound is not null && v.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && v.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && v.Contains(_forbiddenWordFlag))))
                 {
                     return false;
                 }
             }
             else if (_compoundFlag is not null)
             {
-                if (!flags.Contains(_compoundFlag) && (_onlyInCompound is null || !flags.Contains(_onlyInCompound))) return false;
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (v.Contains(_compoundFlag) || (_onlyInCompound is not null && v.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && v.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && v.Contains(_forbiddenWordFlag)))) return false;
             }
         }
         else
@@ -1477,21 +1531,28 @@ internal sealed class AffixManager : IDisposable
             // or the generic compound flag (if defined).
             if (_compoundEnd is not null)
             {
-                if (!flags.Contains(_compoundEnd) && (_compoundFlag is null || !flags.Contains(_compoundFlag)) && (_onlyInCompound is null || !flags.Contains(_onlyInCompound)))
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (v.Contains(_compoundEnd) || (_compoundFlag is not null && v.Contains(_compoundFlag)) || (_onlyInCompound is not null && v.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && v.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && v.Contains(_forbiddenWordFlag))))
                 {
                     return false;
                 }
             }
             else if (_compoundFlag is not null)
             {
-                if (!flags.Contains(_compoundFlag) && (_onlyInCompound is null || !flags.Contains(_onlyInCompound))) return false;
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (v.Contains(_compoundFlag) || (_onlyInCompound is not null && v.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && v.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && v.Contains(_forbiddenWordFlag)))) return false;
             }
         }
 
-        // Check COMPOUNDFORBIDFLAG - forbid this word in compounds
-        if (_compoundForbidFlag is not null && flags.Contains(_compoundForbidFlag))
+        // Additional rejection: if every variant of the surface form carries
+        // COMPOUNDFORBIDFLAG or FORBIDDENWORD then it can't be used inside
+        // compounds. If at least one suitable variant remains, it's acceptable.
+        if (!string.IsNullOrEmpty(_compoundForbidFlag) || !string.IsNullOrEmpty(_forbiddenWordFlag))
         {
-            return false;
+            // if every variant is either compound-forbidden or fully forbidden then
+            // reject the part for compound use.
+            if (variants.Count > 0 && variants.All(v => (!string.IsNullOrEmpty(_compoundForbidFlag) && v.Contains(_compoundForbidFlag)) || (!string.IsNullOrEmpty(_forbiddenWordFlag) && v.Contains(_forbiddenWordFlag))))
+            {
+                return false;
+            }
         }
 
         return true;
@@ -1713,8 +1774,12 @@ internal sealed class AffixManager : IDisposable
             return false;
         }
 
-        var flags = _hashManager.GetWordFlags(word);
-        return flags is not null && flags.Contains(_onlyInCompound);
+        // Use per-entry flag variants to correctly detect multi-character flags
+        // (e.g. 'cc'). GetWordFlags() returns deduplicated characters which can
+        // hide repeated characters and lead to incorrect matches.
+        var variants = _hashManager.GetWordFlagVariants(word).ToList();
+        if (variants.Count == 0) return false;
+        return variants.Any(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound));
     }
 
     /// <summary>
@@ -1729,6 +1794,47 @@ internal sealed class AffixManager : IDisposable
 
         var flags = _hashManager.GetWordFlags(word);
         return flags is not null && flags.Contains(_needAffixFlag);
+    }
+
+    /// <summary>
+    /// Return true if the given word is marked as forbidden (FORBIDDENWORD) either
+    /// directly in the dictionary or via affix-derived forms that inherit/apply
+    /// appended flags from affix rules.
+    /// </summary>
+    public bool IsForbiddenWord(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (_forbiddenWordFlag is null) return false;
+
+        // direct lookup — gather all homonym flag variants. If any variant
+        // doesn't include the forbidden flag then the surface form is allowed.
+        var variants = _hashManager.GetWordFlagVariants(word).ToList();
+        if (variants.Count > 0)
+        {
+            if (variants.Any(v => string.IsNullOrEmpty(v) || !v.Contains(_forbiddenWordFlag)))
+            {
+                return false;
+            }
+            return true; // all variants contain the forbidden flag
+        }
+
+        // If it's affix-derived, try to locate the base and see whether the
+        // base (including appended affix flags) indicates forbidden.
+        if (TryFindAffixBase(word, allowBaseOnlyInCompound: false, out var baseCandidate, out _, out var appended))
+        {
+            if (baseCandidate is not null)
+            {
+                var baseVariants = _hashManager.GetWordFlagVariants(baseCandidate).ToList();
+                if (baseVariants.Count == 0) return false;
+                // For derived forms treat each homonym variant separately; only
+                // when every variant (after adding appended flags) contains the
+                // forbidden flag is the derived form forbidden.
+                return baseVariants.All(v => (v + (appended ?? string.Empty)).Contains(_forbiddenWordFlag));
+            }
+        }
+
+        return false;
     }
 
     /// <summary>
@@ -1802,8 +1908,8 @@ internal sealed class AffixManager : IDisposable
             // If base1 is a dictionary word and allowed
             if (_hashManager.Lookup(base1))
             {
-                var baseFlags = _hashManager.GetWordFlags(base1);
-                if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseFlags is not null && baseFlags.Contains(_onlyInCompound))
+                var baseVariants = _hashManager.GetWordFlagVariants(base1).ToList();
+                if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
                 {
                     // base only allowed in compounds and caller disallows it
                     // try other possibilities
@@ -1818,7 +1924,7 @@ internal sealed class AffixManager : IDisposable
             }
 
             // If base1 can be created by combining two dictionary words, accept it
-            if (IsCompoundMadeOfTwoWords(base1))
+            if (IsCompoundMadeOfTwoWords(base1, out _, out _))
             {
                 baseCandidate = base1;
                 kind = AffixMatchKind.SuffixOnly;
@@ -1860,8 +1966,8 @@ internal sealed class AffixManager : IDisposable
 
                 if (_hashManager.Lookup(base2))
                 {
-                    var baseFlags = _hashManager.GetWordFlags(base2);
-                    if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseFlags is not null && baseFlags.Contains(_onlyInCompound))
+                    var baseVariants = _hashManager.GetWordFlagVariants(base2).ToList();
+                    if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
                     {
                         // not allowed by caller
                     }
@@ -1874,7 +1980,7 @@ internal sealed class AffixManager : IDisposable
                     }
                 }
 
-                if (IsCompoundMadeOfTwoWords(base2))
+                if (IsCompoundMadeOfTwoWords(base2, out _, out _))
                 {
                     baseCandidate = base2;
                     kind = AffixMatchKind.SuffixThenPrefix;
@@ -1919,8 +2025,8 @@ internal sealed class AffixManager : IDisposable
             // direct base after prefix
             if (_hashManager.Lookup(rem))
             {
-                var baseFlags = _hashManager.GetWordFlags(rem);
-                if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseFlags is not null && baseFlags.Contains(_onlyInCompound))
+                var baseVariants = _hashManager.GetWordFlagVariants(rem).ToList();
+                if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
                 {
                     // not allowed by caller, continue
                 }
@@ -1933,7 +2039,7 @@ internal sealed class AffixManager : IDisposable
                 }
             }
 
-            if (IsCompoundMadeOfTwoWords(rem))
+            if (IsCompoundMadeOfTwoWords(rem, out _, out _))
             {
                 baseCandidate = rem;
                 kind = AffixMatchKind.PrefixOnly;
@@ -1975,8 +2081,8 @@ internal sealed class AffixManager : IDisposable
 
                 if (_hashManager.Lookup(base2))
                 {
-                    var baseFlags = _hashManager.GetWordFlags(base2);
-                    if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseFlags is not null && baseFlags.Contains(_onlyInCompound))
+                    var baseVariants = _hashManager.GetWordFlagVariants(base2).ToList();
+                    if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
                     {
                         // not allowed
                     }
@@ -1989,7 +2095,7 @@ internal sealed class AffixManager : IDisposable
                     }
                 }
 
-                if (IsCompoundMadeOfTwoWords(base2))
+                if (IsCompoundMadeOfTwoWords(base2, out _, out _))
                 {
                     baseCandidate = base2;
                     kind = AffixMatchKind.PrefixThenSuffix;
@@ -2028,8 +2134,10 @@ internal sealed class AffixManager : IDisposable
     /// dictionary words that meet the minimum compound length constraints. This
     /// provides a shallow nested-compound check without unbounded recursion.
     /// </summary>
-    private bool IsCompoundMadeOfTwoWords(string word)
+    private bool IsCompoundMadeOfTwoWords(string word, out bool aRequiresForce, out bool bRequiresForce)
     {
+        aRequiresForce = false;
+        bRequiresForce = false;
         if (string.IsNullOrEmpty(word)) return false;
         if (word.Length < 2 * _compoundMin) return false;
 
@@ -2046,17 +2154,21 @@ internal sealed class AffixManager : IDisposable
                     // obeys compound rules. This prevents allowing nested splits that
                     // violate COMPOUNDFLAG/position constraints (e.g., a first component
                     // without the required compound flag).
-                    if (!IsValidCompoundPart(a, 0, 0, i, word)) continue;
-                    if (!IsValidCompoundPart(b, 1, i, word.Length, word)) continue;
+                    if (!IsValidCompoundPart(a, 0, 0, i, word, out var aForce)) continue;
+                    if (!IsValidCompoundPart(b, 1, i, word.Length, word, out var bForce)) continue;
 
                     // validate the internal boundary's compound rules
                     if (CheckCompoundRules(word, i, word.Length, a, b))
                     {
                         // matched and valid
+                        aRequiresForce = aForce;
+                        bRequiresForce = bForce;
                         return true;
                     }
                 }
         }
+        aRequiresForce = false;
+        bRequiresForce = false;
         return false;
     }
 
@@ -2115,8 +2227,6 @@ internal sealed class AffixManager : IDisposable
         {
             return true;
         }
-
-        // Try breaking at each break point
         foreach (var breakPoint in _breakPoints)
         {
             // Find all occurrences of the break point

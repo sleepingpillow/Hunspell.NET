@@ -12,7 +12,11 @@ namespace Hunspell;
 /// </summary>
 internal sealed class HashManager : IDisposable
 {
-    private readonly Dictionary<string, WordEntry> _words = new(StringComparer.OrdinalIgnoreCase);
+    // Support multiple dictionary entries for the same surface word (homonyms)
+    // by storing a list of WordEntry per surface form. This allows us to
+    // determine whether a word is "forbidden" only when all homonym entries
+    // carry the FORBIDDENWORD flag (matching upstream Hunspell behavior).
+    private readonly Dictionary<string, List<WordEntry>> _words = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _runtimeWords = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
@@ -66,7 +70,12 @@ internal sealed class HashManager : IDisposable
 
         if (!string.IsNullOrEmpty(word))
         {
-            _words[word] = new WordEntry(word, flags);
+            if (!_words.TryGetValue(word, out var list))
+            {
+                list = new List<WordEntry>();
+                _words[word] = list;
+            }
+            list.Add(new WordEntry(word, flags));
         }
     }
 
@@ -103,13 +112,53 @@ internal sealed class HashManager : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         
-        if (_words.TryGetValue(word, out var entry))
+        if (_words.TryGetValue(word, out var entries))
         {
-            return entry.Flags;
+            // Return the union of all flags across homonym entries. This keeps
+            // the existing callers working (they typically call .Contains on
+            // the returned flags string), while allowing higher-level code to
+            // inspect individual variants when necessary.
+            var set = new HashSet<char>();
+            foreach (var e in entries)
+            {
+                if (string.IsNullOrEmpty(e.Flags)) continue;
+                foreach (var ch in e.Flags)
+                {
+                    set.Add(ch);
+                }
+            }
+            return string.Concat(set);
         }
         
         // Runtime words have no flags
         return _runtimeWords.Contains(word) ? string.Empty : null;
+    }
+
+    /// <summary>
+    /// Return all flag-variants for a given surface word as they were read from
+    /// the dictionary file. If the word is not present, an empty sequence is
+    /// returned.
+    /// </summary>
+    public IEnumerable<string> GetWordFlagVariants(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (_words.TryGetValue(word, out var entries))
+        {
+            // If an exact-case variant exists (e.g. 'Kg') prefer those entries
+            // so per-case flags (like 'Kg/X') are respected. Otherwise fall back
+            // to all variants for the case-insensitive match.
+            var exact = entries.Where(e => string.Equals(e.Word, word, StringComparison.Ordinal)).ToList();
+            var source = exact.Count > 0 ? exact : entries;
+            foreach (var e in source)
+            {
+                yield return e.Flags ?? string.Empty;
+            }
+            yield break;
+        }
+
+        // runtime words have zero flags
+        if (_runtimeWords.Contains(word)) yield return string.Empty;
     }
 
     public void Dispose()

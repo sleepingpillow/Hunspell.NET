@@ -48,8 +48,15 @@ public sealed class HunspellSpellChecker : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(word);
 
         // First check if it's in the dictionary
+            if (_hashManager == null) { /* no dictionary */ }
         if (_hashManager?.Lookup(word) ?? false)
         {
+            // If the word is marked as FORBIDDENWORD in the dictionary or via
+            // derived affix flags, it must be rejected.
+                if (_affixManager?.IsForbiddenWord(word) ?? false)
+                {
+                    return false;
+                }
             // Check if the word is marked as ONLYINCOMPOUND
             // If so, it's only valid inside compounds, not standalone
             if (_affixManager?.IsOnlyInCompound(word) ?? false)
@@ -66,8 +73,13 @@ public sealed class HunspellSpellChecker : IDisposable
         }
 
         // If it's an affix-derived form (e.g., foos from foo + SFX 's'), accept it
-        if (_affixManager?.CheckAffixedWord(word) ?? false)
+            if (_affixManager?.CheckAffixedWord(word) ?? false)
         {
+            // Accept affixed-derived forms only when they're not forbidden by flags
+            if (_affixManager?.IsForbiddenWord(word) ?? false)
+            {
+                return false;
+            }
             return true;
         }
 
@@ -78,7 +90,9 @@ public sealed class HunspellSpellChecker : IDisposable
         }
 
         // If not found, check if it's a valid compound word
-        return _affixManager?.CheckCompound(word) ?? false;
+        var compoundOk = _affixManager?.CheckCompound(word) ?? false;
+        return compoundOk;
+        
     }
 
     /// <summary>
