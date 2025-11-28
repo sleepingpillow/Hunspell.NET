@@ -1,4 +1,6 @@
 using System.IO;
+using System.Linq;
+using System.Collections.Generic;
 using Xunit;
 
 namespace Hunspell.Tests;
@@ -19,6 +21,7 @@ public class UpstreamAffixAndCompoundTests
     }
 
     [Theory]
+    // GoodWords datasets — unique list
     [InlineData("rep")]
     [InlineData("compoundrule/basic")]
     [InlineData("compoundrule/compoundrule")]
@@ -43,13 +46,11 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("allcaps3")]
     [InlineData("compoundaffix")]
     [InlineData("compoundaffix2")]
-
     [InlineData("compoundaffix3")]
     [InlineData("compoundforbid")]
     [InlineData("compoundflag")]
     [InlineData("forceucase")]
     [InlineData("fullstrip")]
-
     [InlineData("break/basic")]
     [InlineData("checkcompoundrep/basic")]
     [InlineData("checkcompoundpattern/basic")]
@@ -72,6 +73,7 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("ph")]
     [InlineData("sug")]
     [InlineData("sug2")]
+    [InlineData("sugutf")]
     [InlineData("ph2")]
     [InlineData("maputf")]
     [InlineData("reputf")]
@@ -97,6 +99,7 @@ public class UpstreamAffixAndCompoundTests
     }
 
     [Theory]
+    // WrongWords datasets — unique list (matching good list where applicable)
     [InlineData("rep")]
     [InlineData("compoundrule/basic")]
     [InlineData("compoundrule/compoundrule")]
@@ -152,6 +155,7 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("ph2")]
     [InlineData("maputf")]
     [InlineData("reputf")]
+    [InlineData("wordpair")]
     [InlineData("slash")]
     [InlineData("ignore")]
     [InlineData("ignoreutf")]
@@ -174,6 +178,10 @@ public class UpstreamAffixAndCompoundTests
     [Theory]
     [InlineData("sug")]
     [InlineData("sug2")]
+    [InlineData("rep")]
+    [InlineData("alias")]
+    [InlineData("fullstrip")]
+    [InlineData("wordpair")]
     public void UpstreamAffix_Suggestions_ShouldContainExpected(string baseName)
     {
         var aff = D(baseName, baseName + ".aff");
