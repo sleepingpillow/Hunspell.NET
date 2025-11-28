@@ -1,0 +1,4 @@
+# dotless i (Turkish) related tests
+SET UTF-8
+TRY iıIİ
+MAP i ı

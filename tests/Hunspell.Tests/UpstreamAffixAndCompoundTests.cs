@@ -65,6 +65,9 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("allcaps_utf")]
     [InlineData("breakdefault")]
     [InlineData("breakoff")]
+    [InlineData("keepcase")]
+    [InlineData("dotless_i")]
+    [InlineData("map")]
     public void UpstreamAffixCompound_GoodWords_ShouldPass(string baseName)
     {
         var aff = D(baseName, baseName + ".aff");
@@ -127,6 +130,9 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("allcaps_utf")]
     [InlineData("breakdefault")]
     [InlineData("breakoff")]
+    [InlineData("keepcase")]
+    [InlineData("dotless_i")]
+    [InlineData("map")]
     public void UpstreamAffixCompound_WrongWords_ShouldFail(string baseName)
     {
         var aff = D(baseName, baseName + ".aff");

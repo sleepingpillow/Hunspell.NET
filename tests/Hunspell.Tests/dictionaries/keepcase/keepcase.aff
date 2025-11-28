@@ -1,0 +1,6 @@
+# Tests KEEPCASE flag behaviour
+SET UTF-8
+KEEPCASE K
+
+SFX S N 1
+SFX S   0     's      .

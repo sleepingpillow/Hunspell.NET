@@ -38,6 +38,7 @@ internal sealed class AffixManager : IDisposable
     private string? _noSuggestFlag;
     private string? _forbiddenWordFlag;
     private string? _needAffixFlag;
+    private string? _keepCaseFlag;
     private string? _forceUCaseFlag;
 
     // Compound word options
@@ -79,6 +80,11 @@ internal sealed class AffixManager : IDisposable
     private static readonly string[] CommonSuffixes = { "s", "es", "ed", "ing", "er", "est", "ly", "ness", "ment", "tion" };
 
     public string Encoding => _options.TryGetValue("SET", out var encoding) ? encoding : "UTF-8";
+
+    /// <summary>
+    /// Flag used by KEEPCASE directive, if present in affix file.
+    /// </summary>
+    public string? KeepCaseFlag => _keepCaseFlag;
 
     public AffixManager(string affixPath, HashManager hashManager)
     {
@@ -495,6 +501,13 @@ internal sealed class AffixManager : IDisposable
                 if (parts.Length > 1)
                 {
                     _forceUCaseFlag = parts[1];
+                }
+                break;
+
+            case "KEEPCASE":
+                if (parts.Length > 1)
+                {
+                    _keepCaseFlag = parts[1];
                 }
                 break;
 

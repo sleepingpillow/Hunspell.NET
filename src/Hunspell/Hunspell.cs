@@ -72,6 +72,24 @@ public sealed class HunspellSpellChecker : IDisposable
                 {
                     return false;
                 }
+                // enforce KEEPCASE: if the dictionary entry(s) are flagged
+                // with the KEEPCASE flag, reject forms that are ALLCAP or
+                // initial-capitalized (e.g., "ABC" or "Abc")
+                if (_affixManager?.KeepCaseFlag is string kf)
+                {
+                    var variants = _hashManager.GetWordFlagVariants(w).ToList();
+                    if (variants.Count > 0 && variants.Any(v => !string.IsNullOrEmpty(v) && v.Contains(kf)))
+                    {
+                        // detect capitalization classes
+                        bool isAllCaps = string.Equals(w, w.ToUpperInvariant(), StringComparison.Ordinal);
+                        bool isInitCap = char.IsUpper(w[0]) && string.Equals(w.Substring(1), w.Substring(1).ToLowerInvariant(), StringComparison.Ordinal);
+                        if (isAllCaps || isInitCap)
+                        {
+                            return false;
+                        }
+                    }
+                }
+
                 return true;
             }
 
