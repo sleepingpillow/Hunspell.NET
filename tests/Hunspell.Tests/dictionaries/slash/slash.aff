@@ -1,4 +1,9 @@
 SET UTF-8
 
 # simple file to ensure slashes in words are handled
+BREAK 2
+BREAK /
+
+WORDCHARS -/
+
 TRY abcdefghijklmnopqrstuvwxyz

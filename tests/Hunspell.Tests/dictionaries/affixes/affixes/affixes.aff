@@ -1,0 +1,6 @@
+PFX R Y 1
+PFX R 0 re .
+
+SFX D Y 2
+SFX D 0 e d
+SFX D y ied [^aeiou]y

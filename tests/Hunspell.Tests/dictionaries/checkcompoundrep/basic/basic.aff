@@ -1,0 +1,6 @@
+# Forbid compound words that match dictionary words with REP faults
+CHECKCOMPOUNDREP
+COMPOUNDFLAG A
+
+REP 1
+REP í i

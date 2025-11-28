@@ -1,0 +1,8 @@
+SET UTF-8
+
+# compound pattern (basic) - forbid duplicate boundary letters
+CHECKCOMPOUNDPATTERN 1
+CHECKCOMPOUNDPATTERN 1
+
+# Mock try: letters
+TRY abcdefghijklmnopqrstuvwxyz

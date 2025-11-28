@@ -1,0 +1,8 @@
+SET UTF-8
+
+# Replacement variant for checkcompoundpattern tests
+CHECKCOMPOUNDPATTERN 1
+CHECKCOMPOUNDPATTERN 1
+
+REP 1
+REP s z

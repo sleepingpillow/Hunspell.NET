@@ -1,0 +1,6 @@
+SET UTF-8
+
+# Swedish directives sample
+TRY abcdefghijklmnopqrstuvwxyz
+
+WORDCHARS 0-9

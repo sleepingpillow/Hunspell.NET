@@ -609,6 +609,15 @@ internal sealed class AffixManager : IDisposable
         // Try character swaps
         GenerateSwapSuggestions(word, suggestions);
 
+        // Try REP table based replacements (common misspelling mappings)
+        GenerateRepSuggestions(word, suggestions);
+
+        // Try splitting the input to multi-word suggestions (e.g. 'alot' -> 'a lot')
+        GenerateSplitSuggestions(word, suggestions);
+
+        // Try possessive handling (e.g. 'autos' -> "auto's")
+        GeneratePossessiveSuggestions(word, suggestions);
+
         // If we didn't find much with single-edit, try two-edit candidates
         if (suggestions.Count < 10)
         {
@@ -881,6 +890,99 @@ internal sealed class AffixManager : IDisposable
             {
                 suggestions.Add(suggestion);
             }
+        }
+    }
+
+    // Apply REP table rules (from -> to) to the misspelled word and add any
+    // dictionary matches to the suggestion list. This is a lightweight, local
+    // candidate generator that mirrors upstream Hunspell's REP handling for
+    // suggestion generation.
+    private void GenerateRepSuggestions(string word, List<string> suggestions)
+    {
+        if (_repTable.Count == 0) return;
+
+        // For each REP mapping, make replacements at all positions and check
+        // whether the produced candidate exists in the dictionary.
+        foreach (var (from, to) in _repTable)
+        {
+            if (string.IsNullOrEmpty(from)) continue;
+
+            int start = 0;
+            while ((start = word.IndexOf(from, start, StringComparison.OrdinalIgnoreCase)) >= 0)
+            {
+                var candidate = word.Substring(0, start) + to + word.Substring(start + from.Length);
+                if (_hashManager.Lookup(candidate) && !suggestions.Contains(candidate))
+                {
+                    suggestions.Add(candidate);
+                    if (suggestions.Count >= 10) return;
+                }
+
+                // Try the replacement at the next possible position
+                start += 1;
+            }
+        }
+    }
+
+    // Try splitting a single token into two dictionary words and add the pair
+    // as a suggestion (e.g. 'alot' -> 'a lot'). This mirrors upstream Hunspell
+    // behavior where missing-space errors are suggested as separate words.
+    private void GenerateSplitSuggestions(string word, List<string> suggestions)
+    {
+        // Already a space-containing phrase? nothing to do here.
+        if (word.Contains(' ')) return;
+
+        for (int i = 1; i < word.Length && suggestions.Count < 10; i++)
+        {
+            var left = word.Substring(0, i);
+            var right = word.Substring(i);
+
+            if (_hashManager.Lookup(left) && _hashManager.Lookup(right))
+            {
+                var candidate = left + " " + right;
+                if (!suggestions.Contains(candidate)) suggestions.Add(candidate);
+            }
+
+            // also try if the right-hand contains an apostrophe (e.g., un'alunno)
+            if (right.Contains('\'') || left.Contains('\''))
+            {
+                var candidate2 = word.Replace('\'', ' ');
+                if (_hashManager.Lookup(candidate2.Split(' ')[0]) && _hashManager.Lookup(candidate2.Split(' ')[1]) && !suggestions.Contains(candidate2))
+                {
+                    suggestions.Add(candidate2);
+                }
+            }
+        }
+
+        // Try three-way splits (e.g. 'vinteeun' -> 'vinte e un')
+        for (int i = 1; i < word.Length - 1 && suggestions.Count < 10; i++)
+        {
+            for (int j = i + 1; j < word.Length && suggestions.Count < 10; j++)
+            {
+                var a = word.Substring(0, i);
+                var b = word.Substring(i, j - i);
+                var c = word.Substring(j);
+                if (_hashManager.Lookup(a) && _hashManager.Lookup(b) && _hashManager.Lookup(c))
+                {
+                    var candidate = string.Join(" ", new[] { a, b, c });
+                    if (!suggestions.Contains(candidate)) suggestions.Add(candidate);
+                }
+            }
+        }
+    }
+
+    // Generate possessive suggestions for words that might be missing an apostrophe
+    // (e.g. 'autos' -> "auto's") by stripping the trailing 's' and checking
+    // whether the stem exists in the dictionary.
+    private void GeneratePossessiveSuggestions(string word, List<string> suggestions)
+    {
+        if (word.Length <= 2) return;
+        if (!word.EndsWith("s", StringComparison.OrdinalIgnoreCase)) return;
+
+        var stem = word.Substring(0, word.Length - 1);
+        if (_hashManager.Lookup(stem))
+        {
+            var cand = stem + "'s";
+            if (!suggestions.Contains(cand)) suggestions.Add(cand);
         }
     }
 
