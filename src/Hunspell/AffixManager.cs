@@ -609,11 +609,204 @@ internal sealed class AffixManager : IDisposable
         // Try character swaps
         GenerateSwapSuggestions(word, suggestions);
 
+        // If we didn't find much with single-edit, try two-edit candidates
+        if (suggestions.Count < 10)
+        {
+            GenerateTwoEditSuggestions(word, suggestions);
+        }
+
         // Limit suggestions
         if (suggestions.Count > 10)
         {
             suggestions.RemoveRange(10, suggestions.Count - 10);
         }
+    }
+
+    // Generate candidates that are two edits away (perform another single-edit
+    // pass on single-edit candidates). This helps find suggestions that require
+    // two operations (e.g. deletion + substitution) which the single-edit
+    // generators cannot enumerate directly.
+    private void GenerateTwoEditSuggestions(string word, List<string> suggestions)
+    {
+        const int candidate1Cap = 500; // avoid explosion
+        const int candidate2Cap = 2000;
+
+        var tryChars = _options.TryGetValue("TRY", out var chars) ? chars : "abcdefghijklmnopqrstuvwxyz";
+
+        var seenCandidates = new HashSet<string>(StringComparer.Ordinal);
+        var candidates1 = new List<string>();
+
+        // Build first-round candidates (single-edit) without checking dictionary
+        for (int i = 0; i < word.Length; i++)
+        {
+            // substitution
+            foreach (var c in tryChars)
+            {
+                if (c == word[i]) continue;
+                var cand = string.Create(word.Length, (word, i, c), static (span, state) =>
+                {
+                    state.word.AsSpan().CopyTo(span);
+                    span[state.i] = state.c;
+                });
+                if (seenCandidates.Add(cand)) candidates1.Add(cand);
+                if (candidates1.Count >= candidate1Cap) break;
+            }
+            if (candidates1.Count >= candidate1Cap) break;
+
+            // deletion
+            var del = word.Remove(i, 1);
+            if (seenCandidates.Add(del)) candidates1.Add(del);
+            if (candidates1.Count >= candidate1Cap) break;
+        }
+
+        // insertion
+        for (int i = 0; i <= word.Length && candidates1.Count < candidate1Cap; i++)
+        {
+            foreach (var c in tryChars)
+            {
+                var cand = word.Insert(i, c.ToString());
+                if (seenCandidates.Add(cand)) candidates1.Add(cand);
+                if (candidates1.Count >= candidate1Cap) break;
+            }
+        }
+
+        // swaps
+        for (int i = 0; i < word.Length - 1 && candidates1.Count < candidate1Cap; i++)
+        {
+            var cand = string.Create(word.Length, (word, i), static (span, state) =>
+            {
+                state.word.AsSpan().CopyTo(span);
+                (span[state.i], span[state.i + 1]) = (span[state.i + 1], span[state.i]);
+            });
+            if (seenCandidates.Add(cand)) candidates1.Add(cand);
+        }
+
+        // Try each first-round candidate: if any are in the dict, add them. Otherwise
+        // generate a second round from them and check the dictionary.
+        int candidate2Seen = 0;
+        foreach (var cand1 in candidates1)
+        {
+            if (suggestions.Count >= 10) break;
+
+            if (_hashManager.Lookup(cand1) && !suggestions.Contains(cand1))
+            {
+                suggestions.Add(cand1);
+                if (suggestions.Count >= 10) break;
+            }
+
+            // second level: apply single-edit again to cand1, looking for dictionary words
+            // but keep a cap to avoid blowup
+            // substitution
+            for (int i = 0; i < cand1.Length && candidate2Seen < candidate2Cap && suggestions.Count < 10; i++)
+            {
+                foreach (var c in tryChars)
+                {
+                    if (c == cand1[i]) continue;
+                    var cand2 = string.Create(cand1.Length, (cand1, i, c), static (span, state) =>
+                    {
+                        state.cand1.AsSpan().CopyTo(span);
+                        span[state.i] = state.c;
+                    });
+                    candidate2Seen++;
+                    if (_hashManager.Lookup(cand2) && !suggestions.Contains(cand2))
+                    {
+                        suggestions.Add(cand2);
+                        if (suggestions.Count >= 10) break;
+                    }
+                    if (candidate2Seen >= candidate2Cap) break;
+                }
+            }
+
+            // deletion
+            for (int i = 0; i < cand1.Length && candidate2Seen < candidate2Cap && suggestions.Count < 10; i++)
+            {
+                var cand2 = cand1.Remove(i, 1);
+                candidate2Seen++;
+                if (_hashManager.Lookup(cand2) && !suggestions.Contains(cand2))
+                {
+                    suggestions.Add(cand2);
+                    if (suggestions.Count >= 10) break;
+                }
+            }
+
+            // insertion
+            for (int i = 0; i <= cand1.Length && candidate2Seen < candidate2Cap && suggestions.Count < 10; i++)
+            {
+                foreach (var c in tryChars)
+                {
+                    var cand2 = cand1.Insert(i, c.ToString());
+                    candidate2Seen++;
+                    if (_hashManager.Lookup(cand2) && !suggestions.Contains(cand2))
+                    {
+                        suggestions.Add(cand2);
+                        if (suggestions.Count >= 10) break;
+                    }
+                    if (candidate2Seen >= candidate2Cap) break;
+                }
+            }
+
+            // swap
+            for (int i = 0; i < cand1.Length - 1 && candidate2Seen < candidate2Cap && suggestions.Count < 10; i++)
+            {
+                var cand2 = string.Create(cand1.Length, (cand1, i), static (span, state) =>
+                {
+                    state.cand1.AsSpan().CopyTo(span);
+                    (span[state.i], span[state.i + 1]) = (span[state.i + 1], span[state.i]);
+                });
+                candidate2Seen++;
+                if (_hashManager.Lookup(cand2) && !suggestions.Contains(cand2))
+                {
+                    suggestions.Add(cand2);
+                    if (suggestions.Count >= 10) break;
+                }
+            }
+        }
+        // If we still don't have reasonable suggestions, fall back to a bounded
+        // Levenshtein scan of the dictionary to pick close candidates (distance <= 2).
+        if (suggestions.Count < 10)
+        {
+            var words = _hashManager.GetAllWords();
+            foreach (var w in words)
+            {
+                if (suggestions.Count >= 10) break;
+                if (string.Equals(w, word, StringComparison.OrdinalIgnoreCase)) continue;
+                int d = BoundedLevenshtein(word, w, 2);
+                if (d >= 0 && d <= 2 && !suggestions.Contains(w))
+                {
+                    suggestions.Add(w);
+                }
+            }
+        }
+    }
+
+    // Bounded Levenshtein distance: returns -1 if distance > maxDistance, else distance.
+    private static int BoundedLevenshtein(string s, string t, int maxDistance)
+    {
+        if (s == t) return 0;
+        if (Math.Abs(s.Length - t.Length) > maxDistance) return -1;
+
+        int n = s.Length;
+        int m = t.Length;
+        var prev = new int[m + 1];
+        var cur = new int[m + 1];
+
+        for (int j = 0; j <= m; j++) prev[j] = j;
+
+        for (int i = 1; i <= n; i++)
+        {
+            cur[0] = i;
+            int minInRow = cur[0];
+            for (int j = 1; j <= m; j++)
+            {
+                int cost = s[i - 1] == t[j - 1] ? 0 : 1;
+                cur[j] = Math.Min(Math.Min(prev[j] + 1, cur[j - 1] + 1), prev[j - 1] + cost);
+                if (cur[j] < minInRow) minInRow = cur[j];
+            }
+            if (minInRow > maxDistance) return -1;
+            (prev, cur) = (cur, prev);
+        }
+
+        return prev[m] <= maxDistance ? prev[m] : -1;
     }
 
     private void GenerateSubstitutionSuggestions(string word, List<string> suggestions)

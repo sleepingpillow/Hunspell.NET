@@ -48,6 +48,8 @@ foreach (var word in testWords)
     Console.WriteLine();
 }
 
+// (end of sample output)
+
 Console.WriteLine();
 Console.WriteLine("─────────────────────────────────────────────────");
 

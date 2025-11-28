@@ -68,8 +68,11 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("keepcase")]
     [InlineData("dotless_i")]
     [InlineData("map")]
+    [InlineData("phone")]
+    [InlineData("ph")]
     [InlineData("sug")]
     [InlineData("sug2")]
+    [InlineData("sugutf")]
     [InlineData("wordpair")]
     public void UpstreamAffixCompound_GoodWords_ShouldPass(string baseName)
     {
@@ -136,6 +139,9 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("keepcase")]
     [InlineData("dotless_i")]
     [InlineData("map")]
+    [InlineData("sugutf")]
+    [InlineData("phone")]
+    [InlineData("ph")]
     [InlineData("sug")]
     [InlineData("sug2")]
     [InlineData("wordpair")]
@@ -152,6 +158,44 @@ public class UpstreamAffixAndCompoundTests
         foreach (var w in ReadList(wrong))
         {
             Assert.False(sp.Spell(w), $"Expected '{w}' from {baseName}.wrong to be rejected");
+        }
+    }
+
+    [Theory]
+    [InlineData("sug")]
+    [InlineData("sug2")]
+    public void UpstreamAffix_Suggestions_ShouldContainExpected(string baseName)
+    {
+        var aff = D(baseName, baseName + ".aff");
+        var dic = D(baseName, baseName + ".dic");
+
+        if (!File.Exists(dic) && !File.Exists(aff)) return;
+
+        using var sp = new HunspellSpellChecker(aff, dic);
+
+        var wrong = ReadList(D(baseName, baseName + ".wrong")).ToList();
+        var sug = ReadList(D(baseName, baseName + ".sug")).ToList();
+
+        if (!wrong.Any() || !sug.Any()) return;
+
+        var count = Math.Min(wrong.Count, sug.Count);
+        for (int i = 0; i < count; i++)
+        {
+            var miss = wrong[i];
+            var expectedLine = sug[i];
+            // expected format: "miss:expected1,expected2" or just "expected"
+            var parts = expectedLine.Split(':', 2);
+            var expectedPart = parts.Length > 1 ? parts[1] : parts[0];
+            var expected = expectedPart.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(s => s.Trim().Trim('"')).Where(s => s.Length > 0).Select(s => s.ToLowerInvariant()).ToList();
+
+            var suggestions = sp.Suggest(miss).Select(s => s.ToLowerInvariant()).ToList();
+
+            Assert.True(suggestions.Count > 0, $"Expected suggestions for '{miss}' in {baseName}.sug but found none.");
+
+            // At least one expected suggestion should be present in returned suggestions
+            Assert.True(expected.Any(e => suggestions.Contains(e)),
+                $"Expected at least one of [{string.Join(",", expected)}] for '{miss}' but suggestions were [{string.Join(",", suggestions)}]");
         }
     }
 }

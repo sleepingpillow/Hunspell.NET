@@ -1,0 +1,4 @@
+SET UTF-8
+
+# ph dataset — common 'ph' words
+TRY abcdefghijklmnopqrstuvwxyz
