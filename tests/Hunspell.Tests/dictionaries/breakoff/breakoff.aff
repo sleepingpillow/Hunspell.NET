@@ -1,0 +1,4 @@
+# Break off: treat hyphen as a word-character so break isn't applied
+SET UTF-8
+
+WORDCHARS -'

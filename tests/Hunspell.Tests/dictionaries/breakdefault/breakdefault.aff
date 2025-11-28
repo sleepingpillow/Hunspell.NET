@@ -1,0 +1,5 @@
+# Default break behavior (no explicit BREAK entries)
+SET UTF-8
+
+# WordChars does not include '-' so hyphenation is not considered a break
+WORDCHARS .'

@@ -1871,6 +1871,13 @@ internal sealed class AffixManager : IDisposable
         static string ConcatFlags(string? a, string? b)
             => (a ?? string.Empty) + (b ?? string.Empty);
 
+        // Normalize common apostrophe-like characters so affix matching treats
+        // ’ (U+2019) and similar characters as equivalent to ASCII apostrophe.
+        static string NormalizeApostrophes(string s)
+            => s?.Replace('\u2019', '\'').Replace('\u2018', '\'').Replace('\u02BC', '\'') ?? string.Empty;
+
+        var normalizedWord = NormalizeApostrophes(word);
+
         // 1) Try suffix-first: word = base + suffix
         foreach (var sfx in _suffixes)
         {
@@ -1878,7 +1885,8 @@ internal sealed class AffixManager : IDisposable
             // Allow affix matching to succeed regardless of case. Hunspell
             // treats affix matching in a case-insensitive manner for suffixes
             // like "'s" so we must accept "'S" as well.
-            if (!word.EndsWith(sfx.Affix, StringComparison.OrdinalIgnoreCase)) continue;
+            var sfxAffixNorm = NormalizeApostrophes(sfx.Affix ?? string.Empty);
+            if (!normalizedWord.EndsWith(sfxAffixNorm, StringComparison.OrdinalIgnoreCase)) continue;
 
             var base1 = word.Substring(0, word.Length - sfx.Affix.Length);
 
@@ -1943,7 +1951,9 @@ internal sealed class AffixManager : IDisposable
             foreach (var s2 in _suffixes)
             {
                 if (string.IsNullOrEmpty(s2.Affix)) continue;
-                if (!base1.EndsWith(s2.Affix, StringComparison.OrdinalIgnoreCase)) continue;
+                var base1Norm = NormalizeApostrophes(base1);
+                var s2AffixNorm = NormalizeApostrophes(s2.Affix ?? string.Empty);
+                if (!base1Norm.EndsWith(s2AffixNorm, StringComparison.OrdinalIgnoreCase)) continue;
 
                 var base2Candidate = base1.Substring(0, base1.Length - s2.Affix.Length);
 
@@ -1978,7 +1988,9 @@ internal sealed class AffixManager : IDisposable
                 // applied originally. If so, the original dictionary base would
                 // be formed by removing the prefix affix and then *adding back*
                 // any prefix-stripping text.
-                if (!reconstructedBase.StartsWith(pfx.Affix, StringComparison.OrdinalIgnoreCase)) continue;
+                var reconstructedBaseNorm = NormalizeApostrophes(reconstructedBase);
+                var pfxAffixNorm = NormalizeApostrophes(pfx.Affix ?? string.Empty);
+                if (!reconstructedBaseNorm.StartsWith(pfxAffixNorm, StringComparison.OrdinalIgnoreCase)) continue;
 
                 var inner = reconstructedBase.Substring(pfx.Affix.Length);
 
@@ -2030,7 +2042,8 @@ internal sealed class AffixManager : IDisposable
         foreach (var pfx in _prefixes)
         {
             if (string.IsNullOrEmpty(pfx.Affix)) continue;
-            if (!word.StartsWith(pfx.Affix, StringComparison.OrdinalIgnoreCase)) continue;
+            var pfxAffixNorm = NormalizeApostrophes(pfx.Affix ?? string.Empty);
+            if (!normalizedWord.StartsWith(pfxAffixNorm, StringComparison.OrdinalIgnoreCase)) continue;
 
             var rem = word.Substring(pfx.Affix.Length);
 
@@ -2084,7 +2097,9 @@ internal sealed class AffixManager : IDisposable
             foreach (var sfx in _suffixes)
             {
                 if (string.IsNullOrEmpty(sfx.Affix)) continue;
-                if (!rem.EndsWith(sfx.Affix, StringComparison.OrdinalIgnoreCase)) continue;
+                var remNorm = NormalizeApostrophes(rem);
+                var sfxAffixNorm2 = NormalizeApostrophes(sfx.Affix ?? string.Empty);
+                if (!remNorm.EndsWith(sfxAffixNorm2, StringComparison.OrdinalIgnoreCase)) continue;
 
                 var base2 = rem.Substring(0, rem.Length - sfx.Affix.Length);
 
