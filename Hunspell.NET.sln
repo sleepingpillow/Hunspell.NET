@@ -27,6 +27,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Tools.Munch.Tests", "tests\
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hunspell.Maui.Sample", "samples\Hunspell.Maui.Sample\Hunspell.Maui.Sample.csproj", "{4AB8228D-40C3-4A4F-A3B7-AEA7E80B9A31}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Hunspell.WinForms.Sample", "samples\Hunspell.WinForms.Sample\Hunspell.WinForms.Sample.csproj", "{405A4BE6-84DA-4240-A92A-A11279D73A6A}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -133,6 +135,18 @@ Global
 		{4AB8228D-40C3-4A4F-A3B7-AEA7E80B9A31}.Release|x64.Build.0 = Release|Any CPU
 		{4AB8228D-40C3-4A4F-A3B7-AEA7E80B9A31}.Release|x86.ActiveCfg = Release|Any CPU
 		{4AB8228D-40C3-4A4F-A3B7-AEA7E80B9A31}.Release|x86.Build.0 = Release|Any CPU
+		{405A4BE6-84DA-4240-A92A-A11279D73A6A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{405A4BE6-84DA-4240-A92A-A11279D73A6A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{405A4BE6-84DA-4240-A92A-A11279D73A6A}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{405A4BE6-84DA-4240-A92A-A11279D73A6A}.Debug|x64.Build.0 = Debug|Any CPU
+		{405A4BE6-84DA-4240-A92A-A11279D73A6A}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{405A4BE6-84DA-4240-A92A-A11279D73A6A}.Debug|x86.Build.0 = Debug|Any CPU
+		{405A4BE6-84DA-4240-A92A-A11279D73A6A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{405A4BE6-84DA-4240-A92A-A11279D73A6A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{405A4BE6-84DA-4240-A92A-A11279D73A6A}.Release|x64.ActiveCfg = Release|Any CPU
+		{405A4BE6-84DA-4240-A92A-A11279D73A6A}.Release|x64.Build.0 = Release|Any CPU
+		{405A4BE6-84DA-4240-A92A-A11279D73A6A}.Release|x86.ActiveCfg = Release|Any CPU
+		{405A4BE6-84DA-4240-A92A-A11279D73A6A}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -146,6 +160,7 @@ Global
 		{ABCDEF12-3456-7890-ABCD-1234567890AB} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{12345678-9ABC-DEF0-1234-56789ABCDEF0} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 		{4AB8228D-40C3-4A4F-A3B7-AEA7E80B9A31} = {5D20AA90-6969-D8BD-9DCD-8634F4692FDA}
+		{405A4BE6-84DA-4240-A92A-A11279D73A6A} = {5D20AA90-6969-D8BD-9DCD-8634F4692FDA}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {A1C9EC9D-51A1-4E38-92B4-A50C2ECC80DB}
