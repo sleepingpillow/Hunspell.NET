@@ -17,6 +17,8 @@ internal sealed class HashManager : IDisposable
     // determine whether a word is "forbidden" only when all homonym entries
     // carry the FORBIDDENWORD flag (matching upstream Hunspell behavior).
     private readonly Dictionary<string, List<WordEntry>> _words = new(StringComparer.OrdinalIgnoreCase);
+    // Index of dictionary 'ph:' morphological fields -> surfaces (e.g., "forbiddenroot" -> ["forbidden root"]) 
+    private readonly Dictionary<string, List<string>> _phIndex = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _runtimeWords = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
@@ -57,16 +59,50 @@ internal sealed class HashManager : IDisposable
         }
     }
 
-    private void ProcessDictionaryLine(string line)
+        private void ProcessDictionaryLine(string line)
     {
         if (string.IsNullOrWhiteSpace(line) || line.StartsWith('#'))
         {
             return;
         }
 
-        var parts = line.Split('/', 2, StringSplitOptions.TrimEntries);
-        var word = parts[0];
-        var flags = parts.Length > 1 ? parts[1] : string.Empty;
+            // Dictionary lines can contain additional morphological fields
+            // separated by tabs or spaces (e.g. `foo ph:bar`) and surface forms
+            // themselves may include spaces (multi-word entries). The canonical
+            // format is: <surface>[/flags][\t<morph-fields>...].
+            //
+            // Robust parsing strategy:
+            // - Split into tokens on whitespace.
+            // - Treat all leading tokens up to the first token that contains ':'
+            //   (a morphological key like "ph:") as part of the surface + flags
+            //   token(s). This preserves multi-word surfaces that precede morph
+            //   fields.
+            // - Join those leading tokens back into a single string and then
+            //   split it on '/' to extract surface and flag string (if any).
+
+            var trimmed = line.Trim();
+            // Split on whitespace to find morphological fields (tokens like ph:..)
+            var tokens = trimmed.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+            if (tokens.Length == 0) return;
+
+            int morphIndex = Array.FindIndex(tokens, t => t.Contains(':'));
+            string mainToken;
+            if (morphIndex <= 0)
+            {
+                // No morph fields or the first token itself contains ':', keep whole line
+                mainToken = tokens[0];
+                // If multiple tokens and none contains ':', assume whole first token is the entry
+                // (this covers the common case like "word/FLAGS")
+            }
+            else
+            {
+                // Join all tokens up to (but excluding) the first morphological token
+                mainToken = string.Join(' ', tokens.Take(morphIndex));
+            }
+
+            var parts = mainToken.Split('/', 2, StringSplitOptions.TrimEntries);
+            var word = parts[0];
+            var flags = parts.Length > 1 ? parts[1] : string.Empty;
 
         if (!string.IsNullOrEmpty(word))
         {
@@ -76,6 +112,27 @@ internal sealed class HashManager : IDisposable
                 _words[word] = list;
             }
             list.Add(new WordEntry(word, flags));
+            // If there are morphological tokens after the main token, extract
+            // any ph: entries and index them so higher-level logic (e.g., the
+            // affix/compound checker) can consult them.
+            if (tokens.Length > 1 && Array.FindIndex(tokens, t => t.Contains(':')) is var idx && idx >= 0)
+            {
+                for (int j = idx; j < tokens.Length; j++)
+                {
+                    var tok = tokens[j];
+                    if (tok.StartsWith("ph:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var key = tok.Substring(3);
+                        if (string.IsNullOrEmpty(key)) continue;
+                        if (!_phIndex.TryGetValue(key, out var surfList))
+                        {
+                            surfList = new List<string>();
+                            _phIndex[key] = surfList;
+                        }
+                        surfList.Add(word);
+                    }
+                }
+            }
         }
     }
 
@@ -139,6 +196,37 @@ internal sealed class HashManager : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         return _words.Keys.Concat(_runtimeWords);
+    }
+
+    /// <summary>
+    /// Check whether a string is present as a 'ph:' target in the dictionary.
+    /// Returns true if any dictionary entry had a 'ph:VALUE' token where VALUE
+    /// matches the given key (case-insensitive).
+    /// </summary>
+    public bool HasPhTarget(string key)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return _phIndex.ContainsKey(key);
+    }
+
+    /// <summary>
+    /// Check whether any plain 'ph:' target (no '*' or '->' markers) appears
+    /// as a contiguous substring of the supplied word. This is used by the
+    /// compound checker to forbid compounds that contain ph-mapped collapsed
+    /// forms anywhere within them (upstream behaviour exercised by tests).
+    /// </summary>
+    public bool HasPhTargetSubstring(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (string.IsNullOrEmpty(word)) return false;
+        foreach (var key in _phIndex.Keys)
+        {
+            if (string.IsNullOrEmpty(key)) continue;
+            // ignore special pattern keys for this check
+            if (key.Contains('*') || key.Contains("->")) continue;
+            if (word.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+        }
+        return false;
     }
 
     /// <summary>

@@ -1000,7 +1000,7 @@ internal sealed class AffixManager : IDisposable
             var rightCand = GetSingleWordCandidates(right, 12).ToList();
 
             // DEV DEBUG: when analyzing specific failing cases, log candidate lists
-            
+
 
             // Always include the original parts in the candidate sets so we can
             // consider concatenations (leftCandidate + originalRight, etc.) even
@@ -1217,7 +1217,7 @@ internal sealed class AffixManager : IDisposable
                 if (seen.Count >= cap) break;
                 if (seen.Contains(w)) continue;
                 int d = BoundedLevenshtein(part, w, maxDist);
-                
+
                 if (d >= 0)
                 {
                     seen.Add(w);
@@ -1233,6 +1233,28 @@ internal sealed class AffixManager : IDisposable
     public bool CheckCompound(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+
+        // If the dictionary contains a 'ph:' field mapping that names this
+        // compound form (e.g., "forbiddenroot"), upstream Hunspell treats
+        // that collapsed form as a misspelling for the multi-word entry and
+        // therefore it should *not* be accepted as a valid compound. Honor
+        // that behaviour by consulting the dictionary's ph-index.
+        if (_hashManager.HasPhTarget(word) || _hashManager.HasPhTargetSubstring(word))
+        {
+            return false;
+        }
+
+        // Treat possessive variants whose base is a ph: target as invalid
+        // (e.g. "forbiddenroot's" should be rejected when "forbiddenroot"
+        // is a ph: mapping target for a multi-word entry).
+        if (word.Length > 2 && (word.EndsWith("'s", StringComparison.OrdinalIgnoreCase) || word.EndsWith("'S", StringComparison.Ordinal)))
+        {
+            var baseForm = word.Substring(0, word.Length - 2);
+            if (_hashManager.HasPhTarget(baseForm))
+            {
+                return false;
+            }
+        }
 
         // If COMPOUNDRULE is defined, use it for compound checking
         if (_compoundRules.Count > 0)
@@ -1869,6 +1891,14 @@ internal sealed class AffixManager : IDisposable
     private bool IsValidCompoundPart(string part, int wordCount, int startPos, int endPos, string fullWord, out bool requiresForceUCase)
     {
         requiresForceUCase = false;
+        // Disallow pieces that correspond to a dictionary 'ph:' target
+        // (e.g., 'forbiddenroot' appears in ph: mapping and so should not
+        // be used as an atomic compound component).
+        if (_hashManager.HasPhTarget(part))
+        {
+            return false;
+        }
+
         // Must meet minimum length
         if (part.Length < _compoundMin)
         {
@@ -2469,7 +2499,9 @@ internal sealed class AffixManager : IDisposable
             }
 
             // If reconstructed base is a dictionary word and allowed
-            if (_hashManager.Lookup(reconstructedBase))
+            // Also ensure it is not a 'ph:' target which marks the collapsed
+            // form as a misspelling in upstream tests.
+            if (!_hashManager.HasPhTarget(reconstructedBase) && _hashManager.Lookup(reconstructedBase))
             {
                 var baseVariants = _hashManager.GetWordFlagVariants(reconstructedBase).ToList();
                 if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
@@ -2489,7 +2521,7 @@ internal sealed class AffixManager : IDisposable
             }
 
             // If base1 can be created by combining two dictionary words, accept it
-            if (IsCompoundMadeOfTwoWords(reconstructedBase, out _, out _))
+            if (! _hashManager.HasPhTarget(reconstructedBase) && IsCompoundMadeOfTwoWords(reconstructedBase, out _, out _))
                 {
                     baseCandidate = reconstructedBase;
                     kind = AffixMatchKind.SuffixOnly;
@@ -2518,7 +2550,7 @@ internal sealed class AffixManager : IDisposable
                 }
 
                 // check whether reconstructedDouble corresponds to a dictionary word
-                if (_hashManager.Lookup(reconstructedDouble))
+                if (!_hashManager.HasPhTarget(reconstructedDouble) && _hashManager.Lookup(reconstructedDouble))
                 {
                     baseCandidate = reconstructedDouble;
                     kind = AffixMatchKind.SuffixOnly; // effectively two suffixes
@@ -2526,7 +2558,7 @@ internal sealed class AffixManager : IDisposable
                     return true;
                 }
 
-                if (IsCompoundMadeOfTwoWords(reconstructedDouble, out _, out _))
+                if (!_hashManager.HasPhTarget(reconstructedDouble) && IsCompoundMadeOfTwoWords(reconstructedDouble, out _, out _))
                 {
                     baseCandidate = reconstructedDouble;
                     kind = AffixMatchKind.SuffixOnly;
@@ -2566,7 +2598,7 @@ internal sealed class AffixManager : IDisposable
                     }
                 }
 
-                if (_hashManager.Lookup(nestedCandidate))
+                if (!_hashManager.HasPhTarget(nestedCandidate) && _hashManager.Lookup(nestedCandidate))
                 {
                     var baseVariants = _hashManager.GetWordFlagVariants(nestedCandidate).ToList();
                     if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
@@ -2582,7 +2614,7 @@ internal sealed class AffixManager : IDisposable
                     }
                 }
 
-                if (IsCompoundMadeOfTwoWords(nestedCandidate, out _, out _))
+                if (!_hashManager.HasPhTarget(nestedCandidate) && IsCompoundMadeOfTwoWords(nestedCandidate, out _, out _))
                 {
                     baseCandidate = nestedCandidate;
                     kind = AffixMatchKind.SuffixThenPrefix;
@@ -2623,7 +2655,7 @@ internal sealed class AffixManager : IDisposable
             }
 
             // direct base after prefix
-            if (_hashManager.Lookup(baseCandidateFromPrefix))
+            if (!_hashManager.HasPhTarget(baseCandidateFromPrefix) && _hashManager.Lookup(baseCandidateFromPrefix))
             {
                 var baseVariants = _hashManager.GetWordFlagVariants(baseCandidateFromPrefix).ToList();
                 if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
@@ -2639,7 +2671,7 @@ internal sealed class AffixManager : IDisposable
                 }
             }
 
-            if (IsCompoundMadeOfTwoWords(baseCandidateFromPrefix, out _, out _))
+            if (!_hashManager.HasPhTarget(baseCandidateFromPrefix) && IsCompoundMadeOfTwoWords(baseCandidateFromPrefix, out _, out _))
             {
                 baseCandidate = baseCandidateFromPrefix;
                 kind = AffixMatchKind.PrefixOnly;
@@ -2677,7 +2709,7 @@ internal sealed class AffixManager : IDisposable
                     }
                 }
 
-                if (_hashManager.Lookup(baseCandidate2))
+                if (!_hashManager.HasPhTarget(baseCandidate2) && _hashManager.Lookup(baseCandidate2))
                 {
                     var baseVariants = _hashManager.GetWordFlagVariants(baseCandidate2).ToList();
                     if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
@@ -2693,7 +2725,7 @@ internal sealed class AffixManager : IDisposable
                     }
                 }
 
-                if (IsCompoundMadeOfTwoWords(baseCandidate2, out _, out _))
+                if (!_hashManager.HasPhTarget(baseCandidate2) && IsCompoundMadeOfTwoWords(baseCandidate2, out _, out _))
                 {
                     baseCandidate = baseCandidate2;
                     kind = AffixMatchKind.PrefixThenSuffix;
