@@ -31,11 +31,20 @@ Detailed implementation plan for remaining compound word features:
 - Enhanced affix support - Priority 3-4
 - Recommended implementation order and effort estimates
 
+### [Upstream Test Status](upstream-test-status.md)
+Status of compatibility with the upstream Hunspell test suite:
+- Overall: 75% of upstream tests passing (193/257)
+- All 193 active tests passing
+- 64 tests commented out (features not yet implemented)
+- Detailed breakdown by feature category
+- Priority areas for implementation
+
 ## Quick Links
 
 - [Main README](../README.md) - Project overview and quick start guide
 - [Affix Directives Documentation](affix-directives.md) - Complete directive support reference
 - [Compound Words Documentation](compound-words.md) - Detailed compound word feature documentation
+- [Upstream Test Status](upstream-test-status.md) - Upstream test parity tracking
 - [Tests](../tests/Hunspell.Tests/) - Test suite with usage examples
 
 ## Language Support
