@@ -9,11 +9,16 @@ namespace Hunspell.Tests;
 /// Tests for upstream Hunspell test cases. These tests verify compatibility with
 /// the original Hunspell test suite.
 /// 
-/// Test Status Summary:
-/// - Total test directories: 110+ (including nested subdirectories)
-/// - GoodWords tests passing: 73/114 (64%)
-/// - WrongWords tests passing: 75/98 (77%)
-/// - Overall: 288/352 tests passing (82%)
+/// Test Status Summary (this file only):
+/// - GoodWords tests (Root Level): 73 active, 41 commented out
+/// - GoodWords tests (Nested): 20 active
+/// - WrongWords tests (Root Level): 74 active, 23 commented out  
+/// - WrongWords tests (Nested): 20 active
+/// - Suggestions tests: 6 active
+/// - Total active in this file: 193 tests (all passing)
+/// - Total commented out: 64 tests (features not yet implemented)
+/// 
+/// Note: The test project also includes 94 other tests in separate test files.
 /// 
 /// Commented out tests indicate features not yet fully implemented.
 /// See docs/upstream-test-status.md for detailed status.

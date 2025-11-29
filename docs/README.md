@@ -33,9 +33,9 @@ Detailed implementation plan for remaining compound word features:
 
 ### [Upstream Test Status](upstream-test-status.md)
 Status of compatibility with the upstream Hunspell test suite:
-- Overall: 75% of upstream tests passing
-- GoodWords tests: 93/134 passing (69%)
-- WrongWords tests: 95/118 passing (81%)
+- Overall: 75% of upstream tests passing (193/257)
+- All 193 active tests passing
+- 64 tests commented out (features not yet implemented)
 - Detailed breakdown by feature category
 - Priority areas for implementation
 

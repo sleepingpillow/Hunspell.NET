@@ -4,16 +4,16 @@ This document tracks the status of Hunspell.NET's compatibility with the upstrea
 
 ## Summary
 
-| Category | Passing | Total | Percentage |
-|----------|---------|-------|------------|
-| GoodWords (Root Level) | 73 | 114 | 64% |
-| GoodWords (Nested) | 20 | 20 | 100% |
-| WrongWords (Root Level) | 75 | 98 | 77% |
-| WrongWords (Nested) | 20 | 20 | 100% |
-| Suggestions | 6 | 6 | 100% |
-| **Total** | **194** | **258** | **75%** |
+| Category | Active | Commented | Total | Pass Rate |
+|----------|--------|-----------|-------|-----------|
+| GoodWords (Root Level) | 73 | 41 | 114 | 64% |
+| GoodWords (Nested) | 20 | 0 | 20 | 100% |
+| WrongWords (Root Level) | 74 | 23 | 97 | 76% |
+| WrongWords (Nested) | 20 | 0 | 20 | 100% |
+| Suggestions | 6 | 0 | 6 | 100% |
+| **Total** | **193** | **64** | **257** | **75%** |
 
-*Note: The total includes both active and commented-out tests. Active tests: 287, all passing.*
+*All 193 active tests are passing. The 64 commented-out tests represent features not yet implemented.*
 
 ## Test Categories
 
