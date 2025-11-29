@@ -158,10 +158,10 @@ public class UpstreamAffixAndCompoundTests
     //
     // FLAG types (long/num/utf8):
     // [InlineData("encoding")]   // FAILING: Non-UTF8 encoding handling
-    // [InlineData("flag")]       // FAILING: FLAG type handling
-    // [InlineData("flaglong")]   // FAILING: FLAG long type
-    // [InlineData("flagnum")]    // FAILING: FLAG num type
-    // [InlineData("flagutf8")]   // FAILING: FLAG UTF-8 type
+    [InlineData("flag")]
+    [InlineData("flaglong")]
+    [InlineData("flagnum")]
+    [InlineData("flagutf8")]
     //
     // German compounding:
     // [InlineData("germancompounding")]     // FAILING: German compounding rules
@@ -334,6 +334,10 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("ph2")]
     [InlineData("phone")]
     [InlineData("rep")]
+    [InlineData("flag")]
+    [InlineData("flaglong")]
+    [InlineData("flagnum")]
+    [InlineData("flagutf8")]
     [InlineData("reputf")]
     [InlineData("sug")]
     [InlineData("sug2")]

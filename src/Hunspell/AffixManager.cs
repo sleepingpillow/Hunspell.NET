@@ -282,6 +282,21 @@ internal sealed class AffixManager : IDisposable
                 }
                 break;
 
+            case "FLAG":
+                if (parts.Length > 1)
+                {
+                    // Configure HashManager's understanding of flag format
+                    try
+                    {
+                        _hashManager.SetFlagFormat(parts[1]);
+                    }
+                    catch
+                    {
+                        // ignore malformed values — default Single is OK
+                    }
+                }
+                break;
+
             case "PFX":
                 ParseAffixRule(parts, isPrefix: true);
                 break;
@@ -2017,7 +2032,7 @@ internal sealed class AffixManager : IDisposable
                 // these flags to derived word forms).
                 if (affixBase is null) return false;
                 var baseFlags = _hashManager.GetWordFlags(affixBase);
-                var combinedBaseFlags = (baseFlags ?? string.Empty) + (appendedFlag ?? string.Empty);
+                var combinedBaseFlags = _hashManager.MergeFlags(baseFlags ?? string.Empty, appendedFlag);
                 var combinedBaseFlagsNonNull = combinedBaseFlags ?? string.Empty;
                 if (combinedBaseFlags is not null)
                 {
@@ -2439,7 +2454,7 @@ internal sealed class AffixManager : IDisposable
                 // For derived forms treat each homonym variant separately; only
                 // when every variant (after adding appended flags) contains the
                 // forbidden flag is the derived form forbidden.
-                return baseVariants.All(v => (v + (appended ?? string.Empty)).Contains(_forbiddenWordFlag));
+                return baseVariants.All(v => _hashManager.VariantContainsFlagAfterAppend(v, appended ?? string.Empty, _forbiddenWordFlag));
             }
         }
 
@@ -2470,7 +2485,7 @@ internal sealed class AffixManager : IDisposable
     /// </summary>
     private enum AffixMatchKind { None, PrefixOnly, SuffixOnly, PrefixThenSuffix, SuffixThenPrefix }
 
-    private bool TryFindAffixBase(string word, bool allowBaseOnlyInCompound, out string? baseCandidate, out AffixMatchKind kind, out string? appendedFlag)
+    private bool TryFindAffixBase(string word, bool allowBaseOnlyInCompound, out string? baseCandidate, out AffixMatchKind kind, out string? appendedFlag, int depth = 0)
     {
         baseCandidate = null;
         kind = AffixMatchKind.None;
@@ -2590,6 +2605,20 @@ internal sealed class AffixManager : IDisposable
                     appendedFlag = ConcatFlags(s2.AppendedFlag, sfx.AppendedFlag);
                     return true;
                 }
+
+                // If we didn't find the reconstructedDouble directly, try a limited
+                // recursive search: the intermediate reconstructedDouble itself could
+                // be an affix-derived form (e.g., prefix + suffix on the underlying
+                // base). Allow one level of recursion to detect deeper chains such as
+                // two suffixes plus a prefix.
+                if (depth < 2 && !_hashManager.HasPhTarget(reconstructedDouble) && TryFindAffixBase(reconstructedDouble, allowBaseOnlyInCompound, out var nestedBaseFromDouble, out var nestedKindFromDouble, out var nestedAppendedFromDouble, depth + 1))
+                {
+                    baseCandidate = nestedBaseFromDouble;
+                    kind = AffixMatchKind.SuffixOnly; // still effectively suffix-derived
+                    // combine appended flags: nested (inner) appended flags first
+                    appendedFlag = ConcatFlags(nestedAppendedFromDouble, ConcatFlags(s2.AppendedFlag, sfx.AppendedFlag));
+                    return true;
+                }
             }
             foreach (var pfx in _prefixes)
             {
@@ -2644,6 +2673,18 @@ internal sealed class AffixManager : IDisposable
                     baseCandidate = nestedCandidate;
                     kind = AffixMatchKind.SuffixThenPrefix;
                     appendedFlag = ConcatFlags(sfx.AppendedFlag, pfx.AppendedFlag);
+                    return true;
+                }
+
+                // If nestedCandidate isn't a direct dictionary word it could itself
+                // be affix-derived (for example: base + suffix -> foos -> prefix applied
+                // yields unfoos). Use a limited recursive search to find the true
+                // dictionary base that generates nestedCandidate.
+                if (depth < 2 && !_hashManager.HasPhTarget(nestedCandidate) && TryFindAffixBase(nestedCandidate, allowBaseOnlyInCompound, out var nestedBase, out var nestedKind, out var nestedAppended, depth + 1))
+                {
+                    baseCandidate = nestedBase;
+                    kind = AffixMatchKind.SuffixThenPrefix;
+                    appendedFlag = ConcatFlags(sfx.AppendedFlag, ConcatFlags(nestedAppended, pfx.AppendedFlag));
                     return true;
                 }
             }
@@ -2755,6 +2796,17 @@ internal sealed class AffixManager : IDisposable
                     baseCandidate = baseCandidate2;
                     kind = AffixMatchKind.PrefixThenSuffix;
                     appendedFlag = ConcatFlags(pfx.AppendedFlag, sfx.AppendedFlag);
+                    return true;
+                }
+
+                // baseCandidate2 may itself be an affix-derived form (e.g., foos)
+                // which we should resolve recursively. This supports combinations
+                // like prefix + two suffixes.
+                if (depth < 2 && !_hashManager.HasPhTarget(baseCandidate2) && TryFindAffixBase(baseCandidate2, allowBaseOnlyInCompound, out var nestedBaseFromRem, out var nestedKindFromRem, out var nestedAppendedFromRem, depth + 1))
+                {
+                    baseCandidate = nestedBaseFromRem;
+                    kind = AffixMatchKind.PrefixThenSuffix;
+                    appendedFlag = ConcatFlags(pfx.AppendedFlag, ConcatFlags(nestedAppendedFromRem, sfx.AppendedFlag));
                     return true;
                 }
             }

@@ -4,7 +4,7 @@ analyze(drink) =  st:drink
 po:verb	al:drank	al:drunk	ts:present
 stem(drink) = drink
 > drinks
-analyze(drinks) = 
+analyze(drinks) =
 st:drink po:verb	al:drank	al:drunk	ts:present is:sg_3
 analyze(drinks) =  st:drink
 po:noun is:plur
@@ -32,11 +32,11 @@ ts:present ds:der_able
 is:plur
 stem(undrinkables) = undrinkable
 > drank
-analyze(drank) = 
+analyze(drank) =
 po:verb	st:drink	is:past_1
 stem(drank) = drink
 > drunk
-analyze(drunk) = 
+analyze(drunk) =
 po:verb	st:drink	is:past_2
 stem(drunk) = drink
 > phenomenon
@@ -46,7 +46,7 @@ stem(phenomenon) = phenomenon
 > phenomena
 analyze(phenomena) =  po:noun
 st:phenomenon	is:plur
-... 
+...
 stem(phenomena) = phenomenon
 generate(drink, eat) =
 drink
