@@ -15,6 +15,7 @@ namespace Hunspell.WinForms.Sample;
 public partial class SpellCheckRichTextBox : RichTextBox
 {
     private readonly List<(int Start, int Length)> _misspelledRanges = [];
+    private readonly HashSet<string> _ignoredWords = new(StringComparer.OrdinalIgnoreCase);
     private HunspellSpellChecker? _spellChecker;
     private System.Windows.Forms.Timer? _spellCheckTimer;
     private bool _isUpdating;
@@ -94,6 +95,10 @@ public partial class SpellCheckRichTextBox : RichTextBox
                 word = word.Trim('\'');
                 
                 if (string.IsNullOrEmpty(word))
+                    continue;
+                
+                // Skip ignored words (session-specific)
+                if (_ignoredWords.Contains(word))
                     continue;
                 
                 if (!_spellChecker.Spell(word))
@@ -265,11 +270,11 @@ public partial class SpellCheckRichTextBox : RichTextBox
         };
         contextMenu.Items.Add(addToDictionary);
         
-        // Ignore option
+        // Ignore option (session-specific, not saved to dictionary)
         var ignoreAll = new ToolStripMenuItem("Ignore All");
         ignoreAll.Click += (s, e) =>
         {
-            _spellChecker.Add(word);
+            _ignoredWords.Add(word);
             CheckSpelling();
         };
         contextMenu.Items.Add(ignoreAll);
