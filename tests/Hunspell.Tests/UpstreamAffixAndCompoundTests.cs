@@ -8,18 +8,18 @@ namespace Hunspell.Tests;
 /// <summary>
 /// Tests for upstream Hunspell test cases. These tests verify compatibility with
 /// the original Hunspell test suite.
-/// 
+///
 /// Test Status Summary (this file only):
 /// - GoodWords tests (Root Level): 73 active, 41 commented out
 /// - GoodWords tests (Nested): 20 active
-/// - WrongWords tests (Root Level): 74 active, 23 commented out  
+/// - WrongWords tests (Root Level): 74 active, 23 commented out
 /// - WrongWords tests (Nested): 20 active
 /// - Suggestions tests: 6 active
 /// - Total active in this file: 193 tests (all passing)
 /// - Total commented out: 64 tests (features not yet implemented)
-/// 
+///
 /// Note: The test project also includes 94 other tests in separate test files.
-/// 
+///
 /// Commented out tests indicate features not yet fully implemented.
 /// See docs/upstream-test-status.md for detailed status.
 /// </summary>
@@ -27,7 +27,7 @@ public class UpstreamAffixAndCompoundTests
 {
     private static string D(string baseName, string ext)
     {
-        // baseName can be "rep" or "compoundrule/basic" 
+        // baseName can be "rep" or "compoundrule/basic"
         // Extract just the final part for the filename
         var parts = baseName.Split('/');
         var fileName = parts[^1]; // Get the last part
@@ -50,7 +50,7 @@ public class UpstreamAffixAndCompoundTests
     [Theory]
     // Root-level upstream test cases with .good files
     // Alphabetically sorted for easy maintenance
-    // 
+    //
     // PASSING TESTS:
     [InlineData("1748408-1")]
     [InlineData("1748408-2")]
@@ -127,10 +127,10 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("zeroaffix")]
     //
     // FAILING TESTS - Commented out (features not yet implemented):
-    // 
+    //
     // Bug tracker tests requiring specific fixes:
     // [InlineData("1592880")]        // FAILING: Bug tracker test
-    // [InlineData("1975530")]        // FAILING: Bug tracker test  
+    // [InlineData("1975530")]        // FAILING: Bug tracker test
     // [InlineData("2999225")]        // FAILING: Bug tracker test
     //
     // CHECKSHARPS feature (German ß handling):
@@ -158,10 +158,10 @@ public class UpstreamAffixAndCompoundTests
     //
     // FLAG types (long/num/utf8):
     // [InlineData("encoding")]   // FAILING: Non-UTF8 encoding handling
-    // [InlineData("flag")]       // FAILING: FLAG type handling
-    // [InlineData("flaglong")]   // FAILING: FLAG long type
-    // [InlineData("flagnum")]    // FAILING: FLAG num type
-    // [InlineData("flagutf8")]   // FAILING: FLAG UTF-8 type
+    [InlineData("flag")]
+    [InlineData("flaglong")]
+    [InlineData("flagnum")]
+    [InlineData("flagutf8")]
     //
     // German compounding:
     // [InlineData("germancompounding")]     // FAILING: German compounding rules
@@ -334,6 +334,10 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("ph2")]
     [InlineData("phone")]
     [InlineData("rep")]
+    [InlineData("flag")]
+    [InlineData("flaglong")]
+    [InlineData("flagnum")]
+    [InlineData("flagutf8")]
     [InlineData("reputf")]
     [InlineData("sug")]
     [InlineData("sug2")]

@@ -17,10 +17,18 @@ internal sealed class HashManager : IDisposable
     // determine whether a word is "forbidden" only when all homonym entries
     // carry the FORBIDDENWORD flag (matching upstream Hunspell behavior).
     private readonly Dictionary<string, List<WordEntry>> _words = new(StringComparer.OrdinalIgnoreCase);
-    // Index of dictionary 'ph:' morphological fields -> surfaces (e.g., "forbiddenroot" -> ["forbidden root"]) 
+    // Index of dictionary 'ph:' morphological fields -> surfaces (e.g., "forbiddenroot" -> ["forbidden root"])
     private readonly Dictionary<string, List<string>> _phIndex = new(StringComparer.OrdinalIgnoreCase);
+    // ph replacement rules (from -> to) produced from 'ph:' fields in dictionary
+    // - plain ph:token -> mapping token -> surface
+    // - ph:from->to -> mapping from -> to
+    // - ph:pattern* -> mapping pattern_minus_lastchar -> surface_minus_lastchar
+    private readonly List<(string from, string to)> _phReplacementRules = new();
     private readonly HashSet<string> _runtimeWords = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
+    // Flag representation format for dictionary entries. Default is single-character flags.
+    private enum FlagFormat { Single, Long, Num, Utf8 }
+    private FlagFormat _flagFormat = FlagFormat.Single;
 
     public HashManager(string dictionaryPath)
     {
@@ -82,7 +90,10 @@ internal sealed class HashManager : IDisposable
 
             var trimmed = line.Trim();
             // Split on whitespace to find morphological fields (tokens like ph:..)
-            var tokens = trimmed.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+            // Split on whitespace. Use the null-forgiving operator because passing
+            // a literal null here is the canonical way to request splitting on
+            // whitespace; avoid CS8600 by telling the compiler we know this is OK.
+            var tokens = trimmed.Split((char[])null!, StringSplitOptions.RemoveEmptyEntries);
             if (tokens.Length == 0) return;
 
             int morphIndex = Array.FindIndex(tokens, t => t.Contains(':'));
@@ -130,6 +141,39 @@ internal sealed class HashManager : IDisposable
                             _phIndex[key] = surfList;
                         }
                         surfList.Add(word);
+                        // Parse 'ph:' token into replacement rules
+                        try
+                        {
+                            // 1) Replacement operator 'from->to'
+                            if (key.Contains("->"))
+                            {
+                                var partsRt = key.Split(new[] { "->" }, StringSplitOptions.None);
+                                if (partsRt.Length == 2 && !string.IsNullOrEmpty(partsRt[0]) && !string.IsNullOrEmpty(partsRt[1]))
+                                {
+                                    _phReplacementRules.Add((partsRt[0], partsRt[1]));
+                                }
+                            }
+                            // 2) Wildcard form 'pattern*' -> strip last char of pattern and surface
+                            else if (key.EndsWith("*", StringComparison.Ordinal))
+                            {
+                                var p = key.TrimEnd('*');
+                                if (p.Length >= 1 && word.Length >= 1)
+                                {
+                                    var from = p.Length > 1 ? p.Substring(0, p.Length - 1) : p;
+                                    var to = word.Length > 1 ? word.Substring(0, word.Length - 1) : word;
+                                    if (!string.IsNullOrEmpty(from) && !string.IsNullOrEmpty(to)) _phReplacementRules.Add((from, to));
+                                }
+                            }
+                            // 3) Plain token: map token -> surface
+                            else
+                            {
+                                _phReplacementRules.Add((key, word));
+                            }
+                        }
+                        catch
+                        {
+                            // Be defensive for odd tokens; ignore malformed ph: tokens
+                        }
                     }
                 }
             }
@@ -230,6 +274,32 @@ internal sealed class HashManager : IDisposable
     }
 
     /// <summary>
+    /// Apply all stored ph: replacement rules (single-occurrence) to the supplied
+    /// misspelled word and yield candidate surface forms. This mirrors upstream
+    /// behavior where ph: entries are used as phonetic-like substitutions to
+    /// generate suggestions.
+    /// </summary>
+    public IEnumerable<string> GetPhReplacementCandidates(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (string.IsNullOrEmpty(word)) yield break;
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (from, to) in _phReplacementRules)
+        {
+            if (string.IsNullOrEmpty(from)) continue;
+            int idx = 0;
+            while ((idx = word.IndexOf(from, idx, StringComparison.OrdinalIgnoreCase)) >= 0)
+            {
+                var cand = word.Substring(0, idx) + to + word.Substring(idx + from.Length);
+                if (seen.Add(cand)) yield return cand;
+                idx++; // next possible occurrence
+            }
+        }
+    }
+
+    /// <summary>
     /// Get the flags associated with a word.
     /// </summary>
     /// <param name="word">The word to look up</param>
@@ -244,16 +314,52 @@ internal sealed class HashManager : IDisposable
             // the existing callers working (they typically call .Contains on
             // the returned flags string), while allowing higher-level code to
             // inspect individual variants when necessary.
-            var set = new HashSet<char>();
+            // Parse flags depending on the configured flag format and return
+            // a concatenated representation that callers typically use via
+            // .Contains(flag) checks. For multi-character flag formats (Long/Num)
+            // we'll return a comma-separated list of tokens. For Single/UTF8
+            // we'll return a concatenated string of unique characters/runes.
+            var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var e in entries)
             {
-                if (string.IsNullOrEmpty(e.Flags)) continue;
-                foreach (var ch in e.Flags)
+                var f = e.Flags ?? string.Empty;
+                if (string.IsNullOrEmpty(f)) continue;
+                switch (_flagFormat)
                 {
-                    set.Add(ch);
+                    case FlagFormat.Long:
+                        for (int i = 0; i < f.Length; i += 2)
+                        {
+                            int len = Math.Min(2, f.Length - i);
+                            tokens.Add(f.Substring(i, len));
+                        }
+                        break;
+                    case FlagFormat.Num:
+                        foreach (var part in f.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                        {
+                            tokens.Add(part);
+                        }
+                        break;
+                    case FlagFormat.Utf8:
+                    case FlagFormat.Single:
+                    default:
+                        // For single-char and UTF-8 flag formats treat each text
+                        // character as an atomic flag. (This handles BMP characters
+                        // such as 'Ü'. Surrogate pairs are unlikely in flag tokens
+                        // in our test corpus.)
+                        foreach (var ch in f)
+                        {
+                            tokens.Add(ch.ToString());
+                        }
+                        break;
                 }
             }
-            return string.Concat(set);
+
+            if (tokens.Count == 0) return string.Empty;
+            if (_flagFormat == FlagFormat.Long || _flagFormat == FlagFormat.Num)
+            {
+                return string.Join(',', tokens);
+            }
+            return string.Concat(tokens);
         }
 
         // Runtime words have no flags
@@ -287,6 +393,25 @@ internal sealed class HashManager : IDisposable
         if (_runtimeWords.Contains(word)) yield return string.Empty;
     }
 
+    /// <summary>
+    /// Configure the flag format used for parsing dictionary flag strings.
+    /// This can be called by AffixManager after the .aff file is parsed.
+    /// </summary>
+    public void SetFlagFormat(string flagDirective)
+    {
+        if (string.IsNullOrEmpty(flagDirective))
+        {
+            _flagFormat = FlagFormat.Single;
+            return;
+        }
+
+        var normalized = flagDirective.Trim();
+        if (string.Equals(normalized, "long", StringComparison.OrdinalIgnoreCase)) _flagFormat = FlagFormat.Long;
+        else if (string.Equals(normalized, "num", StringComparison.OrdinalIgnoreCase)) _flagFormat = FlagFormat.Num;
+        else if (string.Equals(normalized, "UTF-8", StringComparison.OrdinalIgnoreCase) || string.Equals(normalized, "UTF8", StringComparison.OrdinalIgnoreCase) || string.Equals(normalized, "utf-8", StringComparison.OrdinalIgnoreCase)) _flagFormat = FlagFormat.Utf8;
+        else _flagFormat = FlagFormat.Single;
+    }
+
     public void Dispose()
     {
         if (!_disposed)
@@ -298,4 +423,124 @@ internal sealed class HashManager : IDisposable
     }
 
     private record WordEntry(string Word, string Flags);
+
+    /// <summary>
+    /// Merge a serialized flags string (as returned by GetWordFlags) with an appended
+    /// appended-flag token string produced by an affix rule and return a normalized
+    /// flags string in the same serialized form as GetWordFlags.
+    /// </summary>
+    public string MergeFlags(string baseFlagsSerialized, string? appendedFlagsRaw)
+    {
+        // Represent tokens as a set for de-duplication
+        var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // helper to add tokens depending on current format
+        void addTokensFromSerialized(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return;
+            if (_flagFormat == FlagFormat.Long || _flagFormat == FlagFormat.Num)
+            {
+                foreach (var part in s.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) tokens.Add(part);
+            }
+            else
+            {
+                foreach (var ch in s) tokens.Add(ch.ToString());
+            }
+        }
+
+        void addTokensFromRawAppended(string s)
+        {
+            if (string.IsNullOrEmpty(s)) return;
+            if (_flagFormat == FlagFormat.Long)
+            {
+                for (int i = 0; i < s.Length; i += 2)
+                {
+                    var len = Math.Min(2, s.Length - i);
+                    tokens.Add(s.Substring(i, len));
+                }
+            }
+            else if (_flagFormat == FlagFormat.Num)
+            {
+                foreach (var part in s.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) tokens.Add(part);
+            }
+            else
+            {
+                foreach (var ch in s) tokens.Add(ch.ToString());
+            }
+        }
+
+        addTokensFromSerialized(baseFlagsSerialized ?? string.Empty);
+        if (!string.IsNullOrEmpty(appendedFlagsRaw)) addTokensFromRawAppended(appendedFlagsRaw);
+
+        if (tokens.Count == 0) return string.Empty;
+        if (_flagFormat == FlagFormat.Long || _flagFormat == FlagFormat.Num)
+        {
+            return string.Join(',', tokens);
+        }
+        return string.Concat(tokens);
+    }
+
+    /// <summary>
+    /// Check whether a variant (raw flags as stored in the dictionary entry) would
+    /// contain a particular flag token when combined with an appended-flag string.
+    /// This allows callers to check a specific token equality instead of substring
+    /// matching which could be ambiguous for multi-character tokens.
+    /// </summary>
+    public bool VariantContainsFlagAfterAppend(string variantRaw, string? appendedRaw, string flagToCheck)
+    {
+        if (string.IsNullOrEmpty(flagToCheck)) return false;
+
+        // Tokenize variantRaw according to current flag format
+        var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrEmpty(variantRaw))
+        {
+            if (_flagFormat == FlagFormat.Long)
+            {
+                // Some variants may already be comma-separated; split if so.
+                if (variantRaw.Contains(','))
+                {
+                    foreach (var p in variantRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) tokens.Add(p);
+                }
+                else
+                {
+                    for (int i = 0; i < variantRaw.Length; i += 2)
+                    {
+                        var len = Math.Min(2, variantRaw.Length - i);
+                        tokens.Add(variantRaw.Substring(i, len));
+                    }
+                }
+            }
+            else if (_flagFormat == FlagFormat.Num)
+            {
+                foreach (var p in variantRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) tokens.Add(p);
+            }
+            else
+            {
+                foreach (var ch in variantRaw) tokens.Add(ch.ToString());
+            }
+        }
+
+        // parse appended flags
+        if (!string.IsNullOrEmpty(appendedRaw))
+        {
+            if (_flagFormat == FlagFormat.Long)
+            {
+                for (int i = 0; i < appendedRaw.Length; i += 2)
+                {
+                    var len = Math.Min(2, appendedRaw.Length - i);
+                    tokens.Add(appendedRaw.Substring(i, len));
+                }
+            }
+            else if (_flagFormat == FlagFormat.Num)
+            {
+                foreach (var p in appendedRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) tokens.Add(p);
+            }
+            else
+            {
+                foreach (var ch in appendedRaw) tokens.Add(ch.ToString());
+            }
+        }
+
+        return tokens.Contains(flagToCheck);
+    }
 }

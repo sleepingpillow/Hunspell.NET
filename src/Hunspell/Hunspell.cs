@@ -96,6 +96,13 @@ public sealed class HunspellSpellChecker : IDisposable
             // If it's an affix-derived form (e.g., foos from foo + SFX 's'), accept it
             if (_affixManager?.CheckAffixedWord(w) ?? false)
             {
+                // If this affix-derived form would make a compound component
+                // forbidden due to appended flags (e.g., foobars where bars becomes
+                // COMPOUNDFORBID after appending), reject it.
+                if (_affixManager?.IsAffixDerivedFormForbiddenByCompound(w) ?? false)
+                {
+                    return false;
+                }
                 // Accept affixed-derived forms only when they're not forbidden by flags
                 if (_affixManager?.IsForbiddenWord(w) ?? false)
                 {
