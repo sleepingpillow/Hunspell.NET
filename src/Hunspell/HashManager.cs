@@ -19,6 +19,11 @@ internal sealed class HashManager : IDisposable
     private readonly Dictionary<string, List<WordEntry>> _words = new(StringComparer.OrdinalIgnoreCase);
     // Index of dictionary 'ph:' morphological fields -> surfaces (e.g., "forbiddenroot" -> ["forbidden root"]) 
     private readonly Dictionary<string, List<string>> _phIndex = new(StringComparer.OrdinalIgnoreCase);
+    // ph replacement rules (from -> to) produced from 'ph:' fields in dictionary
+    // - plain ph:token -> mapping token -> surface
+    // - ph:from->to -> mapping from -> to
+    // - ph:pattern* -> mapping pattern_minus_lastchar -> surface_minus_lastchar
+    private readonly List<(string from, string to)> _phReplacementRules = new();
     private readonly HashSet<string> _runtimeWords = new(StringComparer.OrdinalIgnoreCase);
     private bool _disposed;
 
@@ -82,7 +87,10 @@ internal sealed class HashManager : IDisposable
 
             var trimmed = line.Trim();
             // Split on whitespace to find morphological fields (tokens like ph:..)
-            var tokens = trimmed.Split((char[])null, StringSplitOptions.RemoveEmptyEntries);
+            // Split on whitespace. Use the null-forgiving operator because passing
+            // a literal null here is the canonical way to request splitting on
+            // whitespace; avoid CS8600 by telling the compiler we know this is OK.
+            var tokens = trimmed.Split((char[])null!, StringSplitOptions.RemoveEmptyEntries);
             if (tokens.Length == 0) return;
 
             int morphIndex = Array.FindIndex(tokens, t => t.Contains(':'));
@@ -130,6 +138,39 @@ internal sealed class HashManager : IDisposable
                             _phIndex[key] = surfList;
                         }
                         surfList.Add(word);
+                        // Parse 'ph:' token into replacement rules
+                        try
+                        {
+                            // 1) Replacement operator 'from->to'
+                            if (key.Contains("->"))
+                            {
+                                var partsRt = key.Split(new[] { "->" }, StringSplitOptions.None);
+                                if (partsRt.Length == 2 && !string.IsNullOrEmpty(partsRt[0]) && !string.IsNullOrEmpty(partsRt[1]))
+                                {
+                                    _phReplacementRules.Add((partsRt[0], partsRt[1]));
+                                }
+                            }
+                            // 2) Wildcard form 'pattern*' -> strip last char of pattern and surface
+                            else if (key.EndsWith("*", StringComparison.Ordinal))
+                            {
+                                var p = key.TrimEnd('*');
+                                if (p.Length >= 1 && word.Length >= 1)
+                                {
+                                    var from = p.Length > 1 ? p.Substring(0, p.Length - 1) : p;
+                                    var to = word.Length > 1 ? word.Substring(0, word.Length - 1) : word;
+                                    if (!string.IsNullOrEmpty(from) && !string.IsNullOrEmpty(to)) _phReplacementRules.Add((from, to));
+                                }
+                            }
+                            // 3) Plain token: map token -> surface
+                            else
+                            {
+                                _phReplacementRules.Add((key, word));
+                            }
+                        }
+                        catch
+                        {
+                            // Be defensive for odd tokens; ignore malformed ph: tokens
+                        }
                     }
                 }
             }
@@ -227,6 +268,32 @@ internal sealed class HashManager : IDisposable
             if (word.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0) return true;
         }
         return false;
+    }
+
+    /// <summary>
+    /// Apply all stored ph: replacement rules (single-occurrence) to the supplied
+    /// misspelled word and yield candidate surface forms. This mirrors upstream
+    /// behavior where ph: entries are used as phonetic-like substitutions to
+    /// generate suggestions.
+    /// </summary>
+    public IEnumerable<string> GetPhReplacementCandidates(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (string.IsNullOrEmpty(word)) yield break;
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (from, to) in _phReplacementRules)
+        {
+            if (string.IsNullOrEmpty(from)) continue;
+            int idx = 0;
+            while ((idx = word.IndexOf(from, idx, StringComparison.OrdinalIgnoreCase)) >= 0)
+            {
+                var cand = word.Substring(0, idx) + to + word.Substring(idx + from.Length);
+                if (seen.Add(cand)) yield return cand;
+                idx++; // next possible occurrence
+            }
+        }
     }
 
     /// <summary>
