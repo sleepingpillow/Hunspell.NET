@@ -14,23 +14,23 @@
 
         <!-- Header -->
         <VerticalStackLayout Grid.Row="0" Spacing="5">
-            <Label 
+            <Label
                 Text="Hunspell.NET Text Editor"
                 Style="{StaticResource Headline}"
                 SemanticProperties.HeadingLevel="Level1" />
-            <Label 
+            <Label
                 Text="Type text below and click 'Check Spelling' to find misspelled words"
                 Style="{StaticResource SubHeadline}"
                 SemanticProperties.HeadingLevel="Level2" />
         </VerticalStackLayout>
 
         <!-- Text Editor -->
-        <Border Grid.Row="1" 
+        <Border Grid.Row="1"
                 Stroke="{StaticResource Primary}"
                 StrokeThickness="2"
                 StrokeShape="RoundRectangle 10"
                 BackgroundColor="{AppThemeBinding Light=White, Dark=#1a1a1a}">
-            <Editor 
+            <Editor
                 x:Name="TextEditor"
                 Placeholder="Start typing here..."
                 FontSize="16"
@@ -40,13 +40,13 @@
 
         <!-- Buttons -->
         <HorizontalStackLayout Grid.Row="2" Spacing="10" HorizontalOptions="Center">
-            <Button 
+            <Button
                 x:Name="CheckSpellingBtn"
                 Text="Check Spelling"
                 Clicked="OnCheckSpellingClicked"
                 SemanticProperties.Hint="Checks the spelling of the text"
                 HorizontalOptions="Center" />
-            <Button 
+            <Button
                 x:Name="ClearBtn"
                 Text="Clear"
                 Clicked="OnClearClicked"
@@ -55,7 +55,7 @@
         </HorizontalStackLayout>
 
         <!-- Results -->
-        <Border Grid.Row="3" 
+        <Border Grid.Row="3"
                 Stroke="{StaticResource Secondary}"
                 StrokeThickness="1"
                 StrokeShape="RoundRectangle 10"
@@ -63,7 +63,7 @@
                 MinimumHeightRequest="150"
                 BackgroundColor="{AppThemeBinding Light=#f5f5f5, Dark=#2a2a2a}">
             <ScrollView>
-                <Label 
+                <Label
                     x:Name="ResultsLabel"
                     Text="Results will appear here..."
                     FontSize="14"
