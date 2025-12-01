@@ -2793,12 +2793,17 @@ internal sealed class AffixManager : IDisposable
                 if (word[i] == word[i + 1] && word[i + 1] == word[i + 2])
                 {
                     // Ensure the triple sequence overlaps the boundary (i..i+2 includes prevEnd-1..prevEnd etc.)
+                    // If the triple sequence overlaps the boundary, always reject
+                    // at the rule-check level. When simplified-triple semantics are
+                    // enabled the recursive caller has additional logic to attempt
+                    // an alternate alignment (shift the right-hand split by one
+                    // character). That alternate alignment is handled by the
+                    // caller (CheckCompoundRecursive) — so here we simply reject
+                    // the raw triple overlap and let the caller try the simplified
+                    // alignment if configured.
                     if (i <= prevEnd && i + 2 >= prevEnd)
                     {
-                        if (!_simplifiedTriple)
-                        {
-                            return false;
-                        }
+                        return false;
                     }
                 }
             }
