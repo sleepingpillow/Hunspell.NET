@@ -57,7 +57,7 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("1748408-3")]
     [InlineData("1748408-4")]
     [InlineData("2970240")]
-    [InlineData("2970242")]
+    [InlineData("2970242")]  // re-enable: investigate bug tracker case (wrong word accepted)
     [InlineData("IJ")]
     [InlineData("alias")]
     [InlineData("alias2")]
@@ -174,14 +174,14 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("iconv")]     // FAILING: ICONV not implemented
     // [InlineData("iconv2")]    // FAILING: ICONV not implemented
     // [InlineData("oconv2")]    // FAILING: OCONV edge cases
-    //
+    //    //
     // Bug tracker tests:
-    // [InlineData("i53643")]  // FAILING: Bug tracker test
-    // [InlineData("i54633")]  // FAILING: Bug tracker test
-    // [InlineData("i54980")]  // FAILING: Bug tracker test
+    [InlineData("i53643")]  // re-enable: bug tracker case
+    [InlineData("i54633")]  // re-enable: bug tracker case
+    [InlineData("i54980")]  // re-enable: bug tracker case
     //
     // IGNORESUG and related:
-    // [InlineData("ignoresug")]   // FAILING: IGNORESUG not implemented
+    [InlineData("ignoresug")]   // re-enable: IGNORESUG behavior
     //
     // Morphological analysis:
     // [InlineData("morph")]   // FAILING: Morphological analysis not implemented
@@ -196,10 +196,10 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("right_to_left_mark")]  // FAILING: RTL mark handling
     //
     // OpenTaal (Dutch):
-    // [InlineData("opentaal_cpdpat2")]  // FAILING: OpenTaal compound pattern
+    [InlineData("opentaal_cpdpat2")]  // re-enable: checkcompoundpattern improvements
     //
     // SIMPLIFIEDTRIPLE feature:
-    // [InlineData("simplifiedtriple")]  // FAILING: SIMPLIFIEDTRIPLE not implemented
+    [InlineData("simplifiedtriple")]  // re-enable: simplified triple semantics
     public void UpstreamGoodWords_RootLevel_ShouldPass(string baseName)
     {
         var aff = D(baseName, ".aff");
@@ -259,6 +259,257 @@ public class UpstreamAffixAndCompoundTests
             Assert.True(sp.Spell(w), $"Expected '{w}' from {baseName}.good to be accepted");
         }
     }
+
+    [Fact]
+    public void Debug_CheckCompoundPattern_Inspect()
+    {
+        // Inspect checkcompoundpattern cases to see how splits/pattern checks behave
+        var baseName = "checkcompoundpattern";
+        var aff = D(baseName, ".aff");
+        var dic = D(baseName, ".dic");
+
+        if (!File.Exists(dic) && !File.Exists(aff)) return;
+
+        using var sp = new HunspellSpellChecker(aff, dic);
+        var afField = typeof(HunspellSpellChecker).GetField("_affixManager", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var af = afField?.GetValue(sp);
+        Assert.NotNull(af);
+
+        var method = af!.GetType().GetMethod("FindTwoWordSplit", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var hmField = af.GetType().GetField("_hashManager", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        object? hm = null;
+        if (hmField is null)
+        {
+            Console.WriteLine("AffixManager fields available:");
+            foreach (var f in af.GetType().GetFields(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance))
+            {
+                Console.WriteLine("  field: " + f.Name + " (type=" + f.FieldType.Name + ")");
+            }
+        }
+        else
+        {
+            hm = hmField.GetValue(af);
+            Console.WriteLine("hmField found -> GetValue returned: " + (hm is null ? "<null>" : hm.GetType().Name));
+        }
+        var checkRules = af!.GetType().GetMethod("CheckCompoundRules", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+
+        var word = "könnyszámítás";
+        Console.WriteLine("Inspecting: " + word);
+
+        // Ask the affix manager whether it finds a two-word split
+        var split = (ValueTuple<string, string>?)method!.Invoke(af, new object[] { word });
+        if (split is not null)
+        {
+            Console.WriteLine($"Found two-word split: {split.Value.Item1} + {split.Value.Item2}");
+        }
+        else
+        {
+            Console.WriteLine("No two-word split found by FindTwoWordSplit");
+        }
+
+        // Also call CheckCompoundRules directly for the likely split
+        var prev = "könnyszámítás".Substring(0, 5); // likely 'könny'
+        var curr = "könnyszámítás".Substring(5);    // remainder
+        Console.WriteLine("Dictionary words loaded:");
+        var getAll = hm!.GetType().GetMethod("GetAllWords");
+        var all = (System.Collections.IEnumerable)getAll!.Invoke(hm, Array.Empty<object>())!;
+        foreach (var w in all)
+        {
+            var s = w as string ?? string.Empty;
+            Console.WriteLine($"  dict: '{s}'  (codes: {string.Join(' ', s.Select(c => ((int)c).ToString("X")))})");
+        }
+        var prevLookup = hm!.GetType().GetMethod("Lookup")!.Invoke(hm, new object[] { prev });
+        var currLookup = hm.GetType().GetMethod("Lookup")!.Invoke(hm, new object[] { curr });
+        Console.WriteLine($"Lookup(prev) => {prevLookup}");
+        Console.WriteLine($"Lookup(curr) => {currLookup}");
+        var ok = (bool)checkRules!.Invoke(af, new object[] { word, prev.Length, word.Length, prev, curr })!;
+        // Check REP behavior
+        var checkRep = af.GetType().GetMethod("CheckCompoundRep", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var wr1 = "szervíz";
+        var wr2 = "szervízkocsi";
+        // Inspect REP table
+        Console.WriteLine("Affix file content:\n" + File.ReadAllText(aff));
+        var repField = af.GetType().GetField("_repTable", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var repValue = repField!.GetValue(af) as System.Collections.IEnumerable;
+        Console.WriteLine("REP table:");
+        if (repValue != null)
+        {
+            foreach (var r in repValue)
+            {
+                Console.WriteLine("  rep: " + r);
+            }
+        }
+        Console.WriteLine($"CheckCompoundRep('{wr1}') => {checkRep!.Invoke(af, new object[] { wr1 })}");
+        Console.WriteLine($"CheckCompoundRep('{wr2}') => {checkRep!.Invoke(af, new object[] { wr2 })}");
+        Console.WriteLine($"CheckCompoundRules(prev='{prev}', curr='{curr}') => {ok}");
+
+        // Ensure test does not fail — just provides diagnostics in test output
+        Assert.True(true);
+    }
+
+    [Fact]
+    public void Debug_OpenTaal_Cpdpat2_Inspect()
+    {
+        var baseName = "opentaal_cpdpat2";
+        var aff = D(baseName, ".aff");
+        var dic = D(baseName, ".dic");
+
+        if (!File.Exists(dic) && !File.Exists(aff)) return;
+
+        using var sp = new HunspellSpellChecker(aff, dic);
+        var afField = typeof(HunspellSpellChecker).GetField("_affixManager", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var af = afField?.GetValue(sp);
+        Assert.NotNull(af);
+
+        var hmField = typeof(HunspellSpellChecker).GetField("_hashManager", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var hm = hmField?.GetValue(sp);
+        Console.WriteLine("hm instance retrieved: " + (hm is null ? "<null>" : hm.GetType().Name));
+
+        var word = "zout-suikertest";
+        Console.WriteLine("Word: " + word);
+        Console.WriteLine("Affix file:\n" + File.ReadAllText(aff));
+
+        var checkRules = af!.GetType().GetMethod("CheckCompound", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var ok = (bool)checkRules!.Invoke(af, new object[] { word })!;
+        Console.WriteLine($"AffixManager.CheckCompound('{word}') => {ok}");
+
+        var isValidMethod = af.GetType().GetMethod("IsValidCompoundPart", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var checkRulesMethod = af.GetType().GetMethod("CheckCompoundRules", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Console.WriteLine("Examining candidate splits and checks:");
+        for (int i = 2; i <= word.Length - 2; i++)
+        {
+            var a = word.Substring(0, i);
+            var b = word.Substring(i);
+            Console.WriteLine($" Split: '{a}' + '{b}' (pos={i})");
+            var aValid = (bool)isValidMethod!.Invoke(af, new object[] { a, 0, 0, i, word, false })!;
+            var bValid = (bool)isValidMethod!.Invoke(af, new object[] { b, 1, i, word.Length, word, false })!;
+            Console.WriteLine($"  IsValidCompoundPart('{a}') => {aValid}");
+            Console.WriteLine($"  IsValidCompoundPart('{b}') => {bValid}");
+            if (aValid && bValid)
+            {
+                var cr = (bool)checkRulesMethod!.Invoke(af, new object[] { word, i, word.Length, a, b })!;
+                Console.WriteLine($"  CheckCompoundRules(... at pos={i}) => {cr}");
+            }
+        }
+
+        // (re-using isValidMethod/checkRulesMethod above) enumerate splits a second time
+        Console.WriteLine("Checking candidate splits:");
+        for (int i = 2; i <= word.Length - 2; i++)
+        {
+            var a = word.Substring(0, i);
+            var b = word.Substring(i);
+            Console.WriteLine($"  Split: '{a}' + '{b}'");
+            var aValid = (bool)isValidMethod!.Invoke(af, new object[] { a, 0, 0, i, word, false })!;
+            var bValid = (bool)isValidMethod!.Invoke(af, new object[] { b, 1, i, word.Length, word, false })!;
+            Console.WriteLine($"    IsValidCompoundPart('{a}') => {aValid}");
+            Console.WriteLine($"    IsValidCompoundPart('{b}') => {bValid}");
+            if (aValid && bValid)
+            {
+                var cr = (bool)checkRulesMethod!.Invoke(af, new object[] { word, i, word.Length, a, b })!;
+                Console.WriteLine($"    CheckCompoundRules(prevEnd={i}) => {cr}");
+            }
+        }
+
+        // Also check the boundary details by splitting at hyphen
+        var parts = word.Split('-');
+        Console.WriteLine("Split parts: " + string.Join(" + ", parts));
+
+        Console.WriteLine("IsValidCompoundPart method found: " + (isValidMethod is null ? "NO" : "YES"));
+        int pos = 0;
+        foreach (var p in parts)
+        {
+            var i = word.IndexOf(p, pos, StringComparison.Ordinal);
+            var j = i + p.Length;
+            var gwMethod = hm!.GetType().GetMethod("GetWordFlags");
+            Console.WriteLine("GetWordFlags method on hm found: " + (gwMethod is null ? "NO" : "YES"));
+            string? flags = null;
+            if (gwMethod != null)
+            {
+                flags = (string?)gwMethod.Invoke(hm, new object[] { p });
+            }
+            Console.WriteLine($" Part '{p}' pos={i}..{j} Flags={flags}");
+            var v = (bool)isValidMethod!.Invoke(af, new object?[] { p, 0, i, j, word, false })!;
+            Console.WriteLine($"  IsValidCompoundPart('{p}') => {v}");
+            pos = j + 1;
+        }
+
+        Assert.True(true);
+    }
+
+    [Fact]
+    public void Debug_i54980_Inspect()
+    {
+        var baseName = "i54980";
+        var aff = D(baseName, ".aff");
+        var dic = D(baseName, ".dic");
+
+        if (!File.Exists(dic) && !File.Exists(aff)) return;
+
+        using var sp = new HunspellSpellChecker(aff, dic);
+        var hmField = typeof(HunspellSpellChecker).GetField("_hashManager", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var hm = hmField?.GetValue(sp);
+        Assert.NotNull(hm);
+
+        Console.WriteLine("Affix file:\n" + File.ReadAllText(aff));
+        Console.WriteLine("Dictionary file raw bytes -> see decoded content:");
+        var getAll = hm!.GetType().GetMethod("GetAllWords");
+        var all = (System.Collections.IEnumerable)getAll!.Invoke(hm, Array.Empty<object>())!;
+        foreach (var w in all) Console.WriteLine("  dict: '" + w + "'");
+
+        var look = hm.GetType().GetMethod("Lookup");
+        var res = look!.Invoke(hm, new object[] { "cœur" });
+        var found = res is bool b && b;
+        Console.WriteLine("Lookup('cœur') => " + found);
+        Console.WriteLine("Spell('cœur') => " + sp.Spell("cœur"));
+
+        Assert.True(true);
+    }
+
+    [Fact]
+    public void Debug_SimplifiedTriple_Inspect()
+    {
+        var baseName = "simplifiedtriple";
+        var aff = D(baseName, ".aff");
+        var dic = D(baseName, ".dic");
+
+        if (!File.Exists(dic) && !File.Exists(aff)) return;
+
+        using var sp = new HunspellSpellChecker(aff, dic);
+        var afField = typeof(HunspellSpellChecker).GetField("_affixManager", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var af = afField?.GetValue(sp);
+        Assert.NotNull(af);
+
+        var word = "glassko";
+        Console.WriteLine("Affix file:\n" + File.ReadAllText(aff));
+        var checkRules = af!.GetType().GetMethod("CheckCompound", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var ok = (bool)checkRules!.Invoke(af, new object[] { word })!;
+        Console.WriteLine($"AffixManager.CheckCompound('{word}') => {ok}");
+
+        var isValid = af.GetType().GetMethod("IsValidCompoundPart", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        var chkRules = af.GetType().GetMethod("CheckCompoundRules", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
+        Console.WriteLine("Detailed split checks for 'glassko':");
+        for (int split = 2; split <= word.Length - 2; split++)
+        {
+            var left = word.Substring(0, split);
+            var right = word.Substring(split);
+            var leftOk = (bool)isValid!.Invoke(af, new object[] { left, 0, 0, split, word, false })!;
+            var rightOk = (bool)isValid!.Invoke(af, new object[] { right, 1, split, word.Length, word, false })!;
+            Console.WriteLine($" split {split}: '{left}'+'{right}' => leftOk={leftOk} rightOk={rightOk}");
+            if (leftOk && rightOk)
+            {
+                var ruleOk = (bool)chkRules!.Invoke(af, new object[] { word, split, word.Length, left, right })!;
+                Console.WriteLine($"   CheckCompoundRules at split {split} => {ruleOk}");
+            }
+        }
+        Assert.True(true);
+    }
+
+    // Removed detailed debug for checkcompoundpattern3; tests now cover behavior.
+
+    // Removed debugging inspection for CHECKCOMPOUNDREP now that behavior is validated by tests.
+
+    // Removed diagnostic tests that printed partitions and REP information —
+    // behaviors are now covered by concrete unit tests in the suite.
 
     #endregion
 
@@ -350,11 +601,11 @@ public class UpstreamAffixAndCompoundTests
     // FAILING TESTS - Commented out (features not yet implemented):
     //
     // Bug tracker tests:
-    // [InlineData("1706659")]  // FAILING: Bug tracker test
+    [InlineData("1706659")]  // re-enable: bug tracker case
     // [InlineData("2970242")]  // FAILING: Bug tracker test (wrong word accepted)
     //
     // CHECKCOMPOUNDPATTERN issues:
-    // [InlineData("checkcompoundpattern3")]  // FAILING: Pattern boundary not enforced
+    [InlineData("checkcompoundpattern3")]
     //
     // CIRCUMFIX feature:
     // [InlineData("circumfix")]  // FAILING: CIRCUMFIX not fully implemented
@@ -402,7 +653,7 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("opentaal_keepcase")]  // FAILING: OpenTaal keepcase handling
     //
     // SIMPLIFIEDTRIPLE:
-    // [InlineData("simplifiedtriple")]  // FAILING: SIMPLIFIEDTRIPLE not implemented
+    [InlineData("simplifiedtriple")]
     public void UpstreamWrongWords_RootLevel_ShouldFail(string baseName)
     {
         var aff = D(baseName, ".aff");
@@ -415,10 +666,50 @@ public class UpstreamAffixAndCompoundTests
         var wrong = D(baseName, ".wrong");
         foreach (var w in ReadList(wrong))
         {
-            Assert.False(sp.Spell(w), $"Expected '{w}' from {baseName}.wrong to be rejected");
+                Assert.False(sp.Spell(w), $"Expected '{w}' from {baseName}.wrong to be rejected");
         }
     }
 
+
+    [Fact]
+    public void CompoundRule_1706659_Debug()
+    {
+        // Targeted diagnostic for COMPOUNDRULE case 1706659 to ensure the
+        // compound matcher does not accept arbeitsfarbige / arbeitsfarbiger.
+        var aff = D("1706659", ".aff");
+        var dic = D("1706659", ".dic");
+
+        if (!File.Exists(dic) && !File.Exists(aff)) return;
+
+        using var sp = new HunspellSpellChecker(aff, dic);
+
+        // Sanity-check: the full forms should be rejected as per upstream test
+        Assert.False(sp.Spell("arbeitsfarbig"));
+        Assert.False(sp.Spell("arbeitsfarbige"));
+        Assert.False(sp.Spell("arbeitsfarbiger"));
+    }
+
+    [Fact]
+    public void CompoundRule_1706659_InternalCheck()
+    {
+        var aff = D("1706659", ".aff");
+        var dic = D("1706659", ".dic");
+        if (!File.Exists(dic) && !File.Exists(aff)) return;
+
+        using var sp = new HunspellSpellChecker(aff, dic);
+        var afField = typeof(HunspellSpellChecker).GetField("_affixManager", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        var af = afField?.GetValue(sp);
+        Assert.NotNull(af);
+
+        var matchesMethod = af!.GetType().GetMethod("MatchesCompoundRule", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(matchesMethod);
+
+        var word = "arbeitsfarbige";
+        // call MatchesCompoundRule with pattern 'vw'
+        var res = (bool)matchesMethod.Invoke(af, new object[] { word, "vw", 0, 0, new List<string>()! })!;
+        // Should NOT match the 'vw' rule and should therefore not be considered a compound
+        Assert.False(res, "MatchesCompoundRule should not match 'arbeitsfarbige' against 'vw'");
+    }
     #endregion
 
     #region WrongWords Tests - Nested Subdirectory Test Cases

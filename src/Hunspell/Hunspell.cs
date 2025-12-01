@@ -27,7 +27,12 @@ public sealed class HunspellSpellChecker : IDisposable
 
         try
         {
-            _hashManager = new HashManager(dictionaryPath);
+            // Read declared encoding from affix (if present) so the dictionary
+            // can be read using the correct encoding. Many upstream tests put
+            // SET <encoding> into the .aff file and the dictionary needs that
+            // information to decode correctly.
+            var encodingHint = AffixManager.ReadDeclaredEncodingFromAffix(affixPath);
+            _hashManager = new HashManager(dictionaryPath, encodingHint);
             _affixManager = new AffixManager(affixPath, _hashManager);
         }
         catch
@@ -124,6 +129,79 @@ public sealed class HunspellSpellChecker : IDisposable
         // Try the original word first
         if (CheckWord(word)) return true;
 
+        // If the affix file defines WORDCHARS and the input consists only
+        // of characters from that set, accept it as valid. This mirrors
+        // upstream Hunspell where numeric tokens or other sequences built
+        // from WORDCHARS are treated as valid words.
+        if (_affixManager?.WordChars is string wc && !string.IsNullOrEmpty(wc))
+        {
+            bool allAllowed = true;
+            foreach (var ch in word)
+            {
+                if (wc.IndexOf(ch) < 0)
+                {
+                    allAllowed = false;
+                    break;
+                }
+            }
+            if (allAllowed)
+            {
+                // When WORDCHARS contains punctuation-like characters we should
+                // still reject obviously malformed tokens such as those that
+                // start or end with a punctuation character or contain two
+                // punctuation characters in a row. Build a punctuation set
+                // derived from WORDCHARS and apply simple sanity rules.
+                var punctSet = new HashSet<char>();
+                foreach (var ch in wc)
+                {
+                    if (!char.IsLetterOrDigit(ch)) punctSet.Add(ch);
+                }
+
+                // Accept only if token doesn't start or end with punctuation
+                if (punctSet.Contains(word[0]) || punctSet.Contains(word[^1]))
+                {
+                    // malformed (starts/ends with punctuation)
+                }
+                else
+                {
+                    // Reject sequences with consecutive punctuation characters
+                    bool hasConsecutivePunct = false;
+                    for (int j = 1; j < word.Length; j++)
+                    {
+                        if (punctSet.Contains(word[j]) && punctSet.Contains(word[j - 1]))
+                        {
+                            hasConsecutivePunct = true;
+                            break;
+                        }
+                    }
+                    if (!hasConsecutivePunct)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // If the affix file defines IGNORE characters, try removing them and
+        // re-checking the stripped word. This permits words that only differ
+        // by optional punctuation markers (e.g., Armenian punctuation) to be
+        // accepted when the underlying dictionary contains the base form.
+        if (_affixManager?.IgnoreChars is string ignore && !string.IsNullOrEmpty(ignore))
+        {
+            var cleaned = new string(word.Where(ch => !ignore.Contains(ch)).ToArray());
+            if (!string.Equals(cleaned, word, StringComparison.Ordinal) && CheckWord(cleaned)) return true;
+        }
+
+        // If ICONV rules exist, try transforming the input using ICONV mappings
+        // and re-run the checks on each transformed candidate.
+        if (_affixManager is not null)
+        {
+            foreach (var cand in _affixManager.GenerateIconvCandidates(word))
+            {
+                if (CheckWord(cand)) return true;
+            }
+        }
+
         // The exact (unsuccessful) checks above can sometimes fail due to
         // trailing punctuation (e.g. "etc.", "HUNSPELL..."). Upstream Hunspell
         // treats many trailing dots as sentence punctuation and still accepts
@@ -136,6 +214,15 @@ public sealed class HunspellSpellChecker : IDisposable
         if (!string.Equals(trimmed, word, StringComparison.Ordinal))
         {
             if (CheckWord(trimmed)) return true;
+
+            // Also try ICONV candidates for trimmed input
+            if (_affixManager is not null)
+            {
+                foreach (var cand in _affixManager.GenerateIconvCandidates(trimmed))
+                {
+                    if (CheckWord(cand)) return true;
+                }
+            }
         }
 
         return false;

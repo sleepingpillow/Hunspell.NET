@@ -30,40 +30,107 @@ internal sealed class HashManager : IDisposable
     private enum FlagFormat { Single, Long, Num, Utf8 }
     private FlagFormat _flagFormat = FlagFormat.Single;
 
-    public HashManager(string dictionaryPath)
+    public HashManager(string dictionaryPath, string? encodingHint = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dictionaryPath);
-        LoadDictionary(dictionaryPath);
+        LoadDictionary(dictionaryPath, encodingHint);
     }
 
-    private void LoadDictionary(string dictionaryPath)
+    private void LoadDictionary(string dictionaryPath, string? encodingHint = null)
     {
         if (!File.Exists(dictionaryPath))
         {
             throw new FileNotFoundException($"Dictionary file not found: {dictionaryPath}");
         }
 
-        using var stream = File.OpenRead(dictionaryPath);
-        using var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        // Attempt to read the dictionary with UTF-8 first. Some upstream
+        // test data uses legacy single-byte encodings (e.g., CP1250 /
+        // ISO-8859-2). If UTF-8 decoding produces replacement characters
+        // we try a small set of fallback encodings. Register the codepage
+        // provider to support CodePages encodings on all runtimes.
+        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
 
-        // First line typically contains the word count
-        var firstLine = reader.ReadLine();
-        if (firstLine is null)
+        string fileContent;
+        var triedEncodings = new List<System.Text.Encoding>() { System.Text.Encoding.UTF8 };
+
+        // If the affix file asked for a particular encoding, try it first
+        if (!string.IsNullOrEmpty(encodingHint))
         {
-            return;
+            try
+            {
+                var e = System.Text.Encoding.GetEncoding(encodingHint);
+                // prefer the declared encoding first
+                triedEncodings.Insert(0, e);
+            }
+            catch
+            {
+                // try common normalizations (e.g., ISO8859-15 -> ISO-8859-15)
+                try
+                {
+                    var norm = encodingHint.Replace("ISO", "ISO-").Replace('_', '-');
+                    var e = System.Text.Encoding.GetEncoding(norm);
+                    triedEncodings.Insert(0, e);
+                }
+                catch { }
+            }
         }
 
-        // If first line is a number, it's the word count (optional)
-        if (!int.TryParse(firstLine.Trim(), out _))
+        // Read with the preferred encoding first (declared encoding if available,
+        // otherwise UTF-8). Use BOM detection when reading the first attempt.
+        using (var stream = File.OpenRead(dictionaryPath))
+        using (var reader = new StreamReader(stream, triedEncodings[0], detectEncodingFromByteOrderMarks: true))
         {
-            // Not a count, treat as a word
-            ProcessDictionaryLine(firstLine);
+            Console.WriteLine("HashManager: reading dictionary using encoding=" + triedEncodings[0].WebName);
+            fileContent = reader.ReadToEnd();
         }
 
-        // Read remaining lines
-        while (reader.ReadLine() is { } line)
+        // If we observed replacement characters in the decoded text then
+        // attempt a few common legacy encodings used by upstream test data.
+        bool looksBad = fileContent.Contains('\uFFFD');
+        if (looksBad)
         {
-            ProcessDictionaryLine(line);
+            // Try preferred fallbacks for Central/Eastern Europe (Hungarian etc.)
+            var fallbackCodes = new[] { 1250 /* Windows-1250 */, 28592 /* ISO-8859-2 */, 1252 /* Windows-1252 */, 28591 /* ISO-8859-1 */, 28605 /* ISO-8859-15 */ };
+            foreach (var cp in fallbackCodes)
+            {
+                try
+                {
+                    var enc = System.Text.Encoding.GetEncoding(cp);
+                    triedEncodings.Add(enc);
+                    using var stream = File.OpenRead(dictionaryPath);
+                    using var reader = new StreamReader(stream, enc, detectEncodingFromByteOrderMarks: false);
+                    var attempt = reader.ReadToEnd();
+                    if (!attempt.Contains('\uFFFD'))
+                    {
+                        fileContent = attempt;
+                        looksBad = false;
+                        break;
+                    }
+                }
+                catch
+                {
+                    // ignore failed encodings and continue
+                }
+            }
+        }
+
+        // Use the selected file content to parse lines. This ensures we
+        // correctly decode accented characters from legacy encodings when
+        // present in test dictionaries.
+        var lines = fileContent.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
+
+        // Handle optional count line at top
+        int idx = 0;
+        if (lines.Length == 0) return;
+        var firstLine = lines[0];
+        if (int.TryParse(firstLine.Trim(), out _))
+        {
+            idx = 1; // skip count line
+        }
+
+        for (; idx < lines.Length; idx++)
+        {
+            ProcessDictionaryLine(lines[idx]);
         }
     }
 
@@ -112,7 +179,7 @@ internal sealed class HashManager : IDisposable
             }
 
             var parts = mainToken.Split('/', 2, StringSplitOptions.TrimEntries);
-            var word = parts[0];
+            var word = parts[0]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
             var flags = parts.Length > 1 ? parts[1] : string.Empty;
 
         if (!string.IsNullOrEmpty(word))

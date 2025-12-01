@@ -28,12 +28,10 @@ public class CheckCompoundRepTests
         // Act & Assert - Invalid: szervíz (szer + víz) matches "szerviz" when í->i REP is applied
         Assert.False(spellChecker.Spell("szervíz"));
         
-        // Note: Full Hunspell also forbids compounds containing szervíz (like szervízkocsi)
-        // This is a more complex check not yet implemented - compounds containing
-        // prohibited parts should also be forbidden
-        // TODO: Implement recursive CHECKCOMPOUNDREP for compound parts
-        // Assert.False(spellChecker.Spell("szervízkocsi")); // szervíz + kocsi
-        // Assert.False(spellChecker.Spell("kocsiszervíz")); // kocsi + szervíz
+        // Full Hunspell also forbids compounds containing szervíz (like szervízkocsi)
+        // We now implement the recursive CHECKCOMPOUNDREP check for compound parts
+        Assert.False(spellChecker.Spell("szervízkocsi")); // szervíz + kocsi
+        Assert.False(spellChecker.Spell("kocsiszervíz")); // kocsi + szervíz
     }
 
     [Fact]

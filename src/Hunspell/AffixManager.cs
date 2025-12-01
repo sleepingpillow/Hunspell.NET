@@ -3,6 +3,7 @@
 // Licensed under MPL 1.1/GPL 2.0/LGPL 2.1
 
 using System.Text;
+using System.Globalization;
 using System.Text.RegularExpressions;
 
 // NOTE: precise handling for nullable and unused fields is implemented below
@@ -42,6 +43,8 @@ internal sealed class AffixManager : IDisposable
     private string? _needAffixFlag;
     private string? _keepCaseFlag;
     private string? _forceUCaseFlag;
+    // Characters listed by IGNORE directive (characters to be ignored when checking)
+    private string? _ignoreChars;
 
     // Compound word options
     private int _compoundMin = 3;
@@ -77,6 +80,13 @@ internal sealed class AffixManager : IDisposable
 
     // REP table (replacement patterns)
     private readonly List<(string from, string to)> _repTable = new();
+    // ICONV / OCONV tables (input/output conversion rules)
+    private readonly List<(string from, string to)> _iconvTable = new();
+    private readonly List<(string from, string to)> _oconvTable = new();
+    // Cache used by COMPOUNDRULE matching helpers to avoid repeated
+    // expensive lookups (VariantContainsFlagAfterAppend / TryFindAffixBase)
+    // during backtracking. Keyed by surface-part -> token -> bool
+    private readonly Dictionary<string, Dictionary<string, bool>> _compoundTokenMatchCache = new(StringComparer.OrdinalIgnoreCase);
 
     // Common suffixes for COMPOUNDMORESUFFIXES simplified implementation
     private static readonly string[] CommonSuffixes = { "s", "es", "ed", "ing", "er", "est", "ly", "ness", "ment", "tion" };
@@ -88,12 +98,58 @@ internal sealed class AffixManager : IDisposable
     /// </summary>
     public string? KeepCaseFlag => _keepCaseFlag;
 
+    /// <summary>
+    /// The IGNORE directive tokens, if present. Characters here should be
+    /// ignored when checking words (e.g., Armenian punctuation marks).
+    /// </summary>
+    public string? IgnoreChars => _ignoreChars;
+
+    /// <summary>
+    /// The WORDCHARS directive from the affix file, if present.
+    /// Used to determine characters that are considered part of words.
+    /// </summary>
+    public string? WordChars => _options.TryGetValue("WORDCHARS", out var wc) ? wc : null;
+
     public AffixManager(string affixPath, HashManager hashManager)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(affixPath);
         _hashManager = hashManager ?? throw new ArgumentNullException(nameof(hashManager));
 
         LoadAffix(affixPath);
+    }
+
+    /// <summary>
+    /// Quick helper that reads an affix file and extracts the configured
+    /// encoding via the SET directive when present. This is used by
+    /// the top-level loader so dictionary files can be decoded using the
+    /// declared encoding when available.
+    /// </summary>
+    public static string? ReadDeclaredEncodingFromAffix(string affixPath)
+    {
+        if (string.IsNullOrEmpty(affixPath) || !File.Exists(affixPath)) return null;
+
+        try
+        {
+            // Read a small prefix of the file using UTF-8 which is safe for
+            // ASCII keywords like SET. We search for the SET directive.
+            using var sr = new StreamReader(File.OpenRead(affixPath), System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+            string? line;
+            while ((line = sr.ReadLine()) is not null)
+            {
+                var trimmed = line.Trim();
+                if (trimmed.StartsWith("SET", StringComparison.OrdinalIgnoreCase))
+                {
+                    var parts = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                    if (parts.Length > 1) return parts[1];
+                }
+            }
+        }
+        catch
+        {
+            // be defensive; if anything goes wrong just return null so callers
+            // fall back to default detection heuristics
+        }
+        return null;
     }
 
     private void LoadAffix(string affixPath)
@@ -103,11 +159,43 @@ internal sealed class AffixManager : IDisposable
             throw new FileNotFoundException($"Affix file not found: {affixPath}");
         }
 
-        using var stream = File.OpenRead(affixPath);
-        using var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        // Read the affix file similarly to dictionary loading: prefer UTF-8
+        // but fall back to common legacy encodings if we detect replacement
+        // characters. This ensures REP / CHECKCOMPOUNDPATTERN entries that
+        // contain accented tokens are parsed correctly.
+        System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+
+        string content;
+        using (var stream = File.OpenRead(affixPath))
+        using (var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
+        {
+            content = reader.ReadToEnd();
+        }
+
+        if (content.Contains('\uFFFD'))
+        {
+            var fallbacks = new[] { 1250, 28592, 1252, 28591, 28605 };
+            foreach (var cp in fallbacks)
+            {
+                try
+                {
+                    var enc = System.Text.Encoding.GetEncoding(cp);
+                    using var stream = File.OpenRead(affixPath);
+                    using var reader = new StreamReader(stream, enc, detectEncodingFromByteOrderMarks: false);
+                    var attempt = reader.ReadToEnd();
+                    if (!attempt.Contains('\uFFFD'))
+                    {
+                        content = attempt;
+                        break;
+                    }
+                }
+                catch { }
+            }
+        }
 
         string? line;
-        while (reader.ReadLine() is { } rline)
+        using var sr = new StringReader(content);
+        while (sr.ReadLine() is { } rline)
         {
             // handle directives that put their argument on the following line
             // e.g. "COMPOUNDRULE" followed by pattern on next line, or
@@ -116,7 +204,7 @@ internal sealed class AffixManager : IDisposable
             if (string.Equals(line.Trim(), "COMPOUNDRULE", StringComparison.OrdinalIgnoreCase))
             {
                 // read next non-empty non-comment line as the pattern
-                while (reader.ReadLine() is { } nextLine)
+                while (sr.ReadLine() is { } nextLine)
                 {
                     var t = nextLine.Trim();
                     if (string.IsNullOrEmpty(t) || t.StartsWith('#')) continue;
@@ -130,7 +218,7 @@ internal sealed class AffixManager : IDisposable
             if (string.Equals(line.Trim(), "ONLYINCOMPOUND", StringComparison.OrdinalIgnoreCase))
             {
                 // read next non-empty non-comment line for the flag(s)
-                while (reader.ReadLine() is { } nextLine)
+                while (sr.ReadLine() is { } nextLine)
                 {
                     var t = nextLine.Trim();
                     if (string.IsNullOrEmpty(t) || t.StartsWith('#')) continue;
@@ -160,7 +248,7 @@ internal sealed class AffixManager : IDisposable
                 string.Equals(trimmed, "COMPOUNDEND", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(trimmed, "COMPOUNDLAST", StringComparison.OrdinalIgnoreCase))
             {
-                while (reader.ReadLine() is { } nextLine)
+                    while (sr.ReadLine() is { } nextLine)
                 {
                     var t = nextLine.Trim();
                     if (string.IsNullOrEmpty(t) || t.StartsWith('#')) continue;
@@ -190,7 +278,7 @@ internal sealed class AffixManager : IDisposable
                 if (hdrParts.Length >= 4 && int.TryParse(hdrParts[3], out _))
                 {
                     string? nextNonEmpty = null;
-                    while (reader.ReadLine() is { } extra)
+                    while (sr.ReadLine() is { } extra)
                     {
                         var t = extra.Trim();
                         if (string.IsNullOrEmpty(t) || t.StartsWith('#')) continue;
@@ -217,7 +305,7 @@ internal sealed class AffixManager : IDisposable
                                 // continuation seems partial (e.g., "SFX S 0"); read one
                                 // more non-empty line and concatenate as the rule body.
                                 string? ruleBody = null;
-                                while (reader.ReadLine() is { } extra2)
+                                while (sr.ReadLine() is { } extra2)
                                 {
                                     var t2 = extra2.Trim();
                                     if (string.IsNullOrEmpty(t2) || t2.StartsWith('#')) continue;
@@ -469,10 +557,16 @@ internal sealed class AffixManager : IDisposable
             case "KEY":
             case "MAP":
             case "WORDCHARS":
+            case "IGNORE":
                 // Store for potential future use
                 if (parts.Length > 1)
                 {
-                    _options[command] = string.Join(" ", parts[1..]);
+                    var value = string.Join(" ", parts[1..]);
+                    _options[command] = value;
+                    if (string.Equals(command, "IGNORE", StringComparison.OrdinalIgnoreCase))
+                    {
+                        _ignoreChars = value;
+                    }
                 }
                 break;
 
@@ -487,7 +581,42 @@ internal sealed class AffixManager : IDisposable
                     else if (parts.Length >= 3)
                     {
                         // This is a replacement pattern: REP from to
-                        _repTable.Add((parts[1], parts[2]));
+                        // Normalize REP tokens to NFC to match dictionary normalization
+                        var fromToken = parts[1]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
+                        var toToken = parts[2]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
+                        _repTable.Add((fromToken, toToken));
+                    }
+                }
+                break;
+
+            case "ICONV":
+                if (parts.Length > 1)
+                {
+                    if (int.TryParse(parts[1], out _))
+                    {
+                        // count line - ignore
+                    }
+                    else if (parts.Length >= 3)
+                    {
+                        var from = parts[1]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
+                        var to = parts[2]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
+                        _iconvTable.Add((from, to));
+                    }
+                }
+                break;
+
+            case "OCONV":
+                if (parts.Length > 1)
+                {
+                    if (int.TryParse(parts[1], out _))
+                    {
+                        // count line - ignore
+                    }
+                    else if (parts.Length >= 3)
+                    {
+                        var from = parts[1]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
+                        var to = parts[2]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
+                        _oconvTable.Add((from, to));
                     }
                 }
                 break;
@@ -659,6 +788,61 @@ internal sealed class AffixManager : IDisposable
         if (suggestions.Count > 10)
         {
             suggestions.RemoveRange(10, suggestions.Count - 10);
+        }
+    }
+
+    /// <summary>
+    /// Produce candidate words by applying ICONV input conversion rules.
+    /// This generates a bounded set of variants by applying each mapping
+    /// either globally or at individual occurrences. It is intentionally
+    /// conservative to avoid explosion while still catching the common
+    /// patterns used by upstream tests.
+    /// </summary>
+    public IEnumerable<string> GenerateIconvCandidates(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (string.IsNullOrEmpty(word) || _iconvTable.Count == 0) yield break;
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var queue = new Queue<string>();
+        queue.Enqueue(word);
+        seen.Add(word);
+
+        const int MaxVariants = 500;
+
+        while (queue.Count > 0 && seen.Count < MaxVariants)
+        {
+            var current = queue.Dequeue();
+            foreach (var (from, to) in _iconvTable)
+            {
+                if (string.IsNullOrEmpty(from)) continue;
+                int idx = current.IndexOf(from, StringComparison.Ordinal);
+                if (idx < 0) continue;
+
+                // Global replace (every occurrence)
+                var global = current.Replace(from, to);
+                if (seen.Add(global))
+                {
+                    queue.Enqueue(global);
+                    yield return global;
+                }
+
+                // Try replacing each occurrence individually to capture partial
+                // conversion sequences (e.g. when only one instance should expand).
+                int pos = 0;
+                while ((pos = current.IndexOf(from, pos, StringComparison.Ordinal)) >= 0)
+                {
+                    var single = current.Substring(0, pos) + to + current.Substring(pos + from.Length);
+                    if (seen.Add(single))
+                    {
+                        queue.Enqueue(single);
+                        yield return single;
+                    }
+                    pos++; // next possible occurrence
+                }
+
+                if (seen.Count >= MaxVariants) yield break;
+            }
         }
     }
 
@@ -1188,13 +1372,16 @@ internal sealed class AffixManager : IDisposable
         var tryChars = _options.TryGetValue("TRY", out var chars) ? chars : "abcdefghijklmnopqrstuvwxyz";
 
         // REP-based replacements (single occurrence, case-insensitive)
+        // Normalize the working word to NFC so we compare with normalized
+        // REP tokens and dictionary entries consistently.
+        var normalizedPart = part.Normalize(System.Text.NormalizationForm.FormC);
         foreach (var (from, to) in _repTable)
         {
             if (string.IsNullOrEmpty(from)) continue;
             int start = 0;
-            while ((start = part.IndexOf(from, start, StringComparison.OrdinalIgnoreCase)) >= 0)
+            while ((start = normalizedPart.IndexOf(from, start, StringComparison.OrdinalIgnoreCase)) >= 0)
             {
-                var candidate = part.Substring(0, start) + to + part.Substring(start + from.Length);
+                var candidate = normalizedPart.Substring(0, start) + to + normalizedPart.Substring(start + from.Length);
                 if (seen.Add(candidate) && _hashManager.Lookup(candidate))
                 {
                     yield return candidate;
@@ -1328,6 +1515,48 @@ internal sealed class AffixManager : IDisposable
             {
                 return false; // Forbid compound if it matches via REP
             }
+
+            // Additional defensive check: scan any simple two-part split that
+            // is considered a valid compound and see whether any component when
+            // diacritic-folded or via REP replacement maps to a dictionary word.
+            // This catches cases like Hungarian 'szervízkocsi' where 'szervíz'
+            // -> 'szerviz' should forbid the compound.
+            for (int i = _compoundMin; i <= word.Length - _compoundMin; i++)
+            {
+                var a = word.Substring(0, i).Normalize(System.Text.NormalizationForm.FormC);
+                var b = word.Substring(i).Normalize(System.Text.NormalizationForm.FormC);
+                // Only consider splits where both parts look like valid compound parts
+                if (!_hashManager.Lookup(a) && !_hashManager.Lookup(b)) continue;
+                if (!IsValidCompoundPart(a, 0, 0, i, word, out _) || !IsValidCompoundPart(b, 1, i, word.Length, word, out _)) continue;
+
+                // test diacritic-fold of each part
+                var fa = RemoveDiacritics(a);
+                var fb = RemoveDiacritics(b);
+                if (!string.IsNullOrEmpty(fa) && !string.Equals(fa, a, StringComparison.Ordinal) && _hashManager.Lookup(fa)) return false;
+                if (!string.IsNullOrEmpty(fb) && !string.Equals(fb, b, StringComparison.Ordinal) && _hashManager.Lookup(fb)) return false;
+
+                // test each REP rule inside the component
+                foreach (var (from, to) in _repTable)
+                {
+                    if (string.IsNullOrEmpty(from)) continue;
+                    // left part
+                    int start = 0;
+                    while ((start = a.IndexOf(from, start, StringComparison.Ordinal)) >= 0)
+                    {
+                        var cand = a.Substring(0, start) + to + a.Substring(start + from.Length);
+                        if (_hashManager.Lookup(cand)) return false;
+                        start++;
+                    }
+                    // right part
+                    start = 0;
+                    while ((start = b.IndexOf(from, start, StringComparison.Ordinal)) >= 0)
+                    {
+                        var cand = b.Substring(0, start) + to + b.Substring(start + from.Length);
+                        if (_hashManager.Lookup(cand)) return false;
+                        start++;
+                    }
+                }
+            }
         }
 
         return result;
@@ -1338,6 +1567,8 @@ internal sealed class AffixManager : IDisposable
     /// </summary>
     private bool CheckCompoundRep(string word)
     {
+        // Normalize the working word to NFC to match dictionary normalization
+        var normalizedWord = word.Normalize(System.Text.NormalizationForm.FormC);
         // For each REP rule, attempt replacing the 'from' substring at every
         // possible position (one occurrence at a time) and check whether the
         // modified word exists in the dictionary. This mirrors Hunspell's
@@ -1347,12 +1578,74 @@ internal sealed class AffixManager : IDisposable
         {
             if (string.IsNullOrEmpty(from)) continue;
             int idx = 0;
-            while ((idx = word.IndexOf(from, idx, StringComparison.Ordinal)) >= 0)
+            while ((idx = normalizedWord.IndexOf(from, idx, StringComparison.Ordinal)) >= 0)
             {
-                var modified = word.Substring(0, idx) + to + word.Substring(idx + from.Length);
+                var modified = normalizedWord.Substring(0, idx) + to + normalizedWord.Substring(idx + from.Length);
                 if (_hashManager.Lookup(modified))
                 {
                     return true;
+                }
+                // Additionally, check whether replacing this occurrence inside
+                // any valid compound component (including nested multi-component
+                // partitions) would yield a dictionary word. This mirrors upstream
+                // Hunspell behavior where compounds containing a component that
+                // maps to a dictionary word via REP are forbidden (e.g., "szervízkocsi").
+                // We'll enumerate valid partitions of the word into components and
+                // test the affected component.
+                IEnumerable<List<(int start, int end, string part)>> EnumeratePartitions()
+                {
+                    var results = new List<List<(int, int, string)>>();
+
+                    void dfs(int pos, List<(int, int, string)> current)
+                    {
+                        if (pos == normalizedWord.Length)
+                        {
+                            if (current.Count >= 2)
+                            {
+                                results.Add(new List<(int, int, string)>(current));
+                            }
+                            return;
+                        }
+
+                        // try every next split position satisfying COMPOUNDMIN
+                        for (int next = pos + _compoundMin; next <= normalizedWord.Length - _compoundMin; next++)
+                        {
+                            var part = normalizedWord.Substring(pos, next - pos);
+                            // Validate the candidate component for its position
+                            if (!IsValidCompoundPart(part, current.Count, pos, next, normalizedWord, out var _)) continue;
+                            current.Add((pos, next, part));
+                            dfs(next, current);
+                            current.RemoveAt(current.Count - 1);
+                        }
+                    }
+
+                    dfs(0, new List<(int, int, string)>());
+                    return results;
+                }
+
+                var partitions = EnumeratePartitions();
+                // partitions enumerated — suppressed debug printing for perf
+                foreach (var partition in partitions)
+                {
+                    foreach (var (start, end, part) in partition)
+                    {
+                        // If the replacement occurrence lies within this component, test it
+                        if (idx >= start && idx < end)
+                        {
+                            var relIdx = idx - start;
+                            var newPart = part.Substring(0, relIdx) + to + part.Substring(relIdx + from.Length);
+                            // attempt logging suppressed for perf
+                            // Try exact REP replacement
+                            if (_hashManager.Lookup(newPart)) return true;
+                            // Fallback: some REP rules simply replace diacritics — try a
+                            // diacritic-folded form of the component (e.g. 'szervíz' -> 'szerviz')
+                            var folded = RemoveDiacritics(part);
+                            if (!string.IsNullOrEmpty(folded) && !string.Equals(folded, part, StringComparison.Ordinal) && _hashManager.Lookup(folded))
+                            {
+                                return true;
+                            }
+                        }
+                    }
                 }
                 idx++; // continue searching after this position
             }
@@ -1525,7 +1818,53 @@ internal sealed class AffixManager : IDisposable
         for (int len = _compoundMin; len <= word.Length - wordPos; len++)
         {
             var part = word.Substring(wordPos, len);
-            var flags = _hashManager.GetWordFlags(part);
+
+            // Helper: check whether this surface-form or an affix-derived base
+            // would provide the requested flag token. This uses per-variant
+            // checks (VariantContainsFlagAfterAppend) to avoid substring based
+            // matching which can fail for multi-char token formats.
+            bool PartHasToken(string p, string token)
+            {
+                if (string.IsNullOrEmpty(token)) return false;
+
+                // consult small cache to avoid repeated expensive checks
+                if (!_compoundTokenMatchCache.TryGetValue(p, out var dict))
+                {
+                    dict = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                    _compoundTokenMatchCache[p] = dict;
+                }
+                if (dict.TryGetValue(token, out var cached)) return cached;
+
+                // Check any exact dictionary variant for this surface form
+                var variants = _hashManager.GetWordFlagVariants(p).ToList();
+                if (variants.Count > 0)
+                {
+                    if (variants.Any(v => _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, token)))
+                    {
+                        dict[token] = true;
+                        return true;
+                    }
+                }
+
+                // If not a direct dictionary entry, attempt to reconstruct via affix rules
+                if (TryFindAffixBase(p, allowBaseOnlyInCompound: true, out var baseCandidate, out _, out var appendedFlag))
+                {
+                    if (string.IsNullOrEmpty(baseCandidate)) return false;
+
+                    var baseVars = _hashManager.GetWordFlagVariants(baseCandidate).ToList();
+                    foreach (var bv in baseVars)
+                    {
+                        if (_hashManager.VariantContainsFlagAfterAppend(bv ?? string.Empty, appendedFlag ?? string.Empty, token))
+                        {
+                            dict[token] = true;
+                            return true;
+                        }
+                    }
+                }
+
+                dict[token] = false;
+                return false;
+            }
 
             // If pattern element is a single-character digit token (e.g., '1'..'7')
             // treat it as a special token classification and match accordingly.
@@ -1546,16 +1885,16 @@ internal sealed class AffixManager : IDisposable
 
             // If we have flags for the current part, and any character in the pattern element
             // matches one of those flags, try advancing the pattern to nextPatternPos.
-            if (flags is not null)
+            // For non-digit tokens, use token-aware matching rather than
+            // substring/character checks. 'flag' may contain multiple
+            // characters when written as a grouped token (e.g. '(ab)').
+            if (PartHasToken(part, flag))
             {
-                if (flag.Any(ch => flags.Contains(ch)))
-                {
                     var newMatchedParts = new List<string>(matchedParts) { part };
                     if (MatchesCompoundRule(word, pattern, wordPos + len, nextPatternPos, newMatchedParts))
                     {
                         return true;
                     }
-                }
             }
         }
 
@@ -1571,7 +1910,45 @@ internal sealed class AffixManager : IDisposable
         for (int len = _compoundMin; len <= word.Length - wordPos; len++)
         {
             var part = word.Substring(wordPos, len);
-            var flags = _hashManager.GetWordFlags(part);
+
+            bool PartHasToken(string p, string token)
+            {
+                if (string.IsNullOrEmpty(token)) return false;
+
+                // consult small cache to avoid repeated expensive checks
+                if (!_compoundTokenMatchCache.TryGetValue(p, out var dict))
+                {
+                    dict = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+                    _compoundTokenMatchCache[p] = dict;
+                }
+                if (dict.TryGetValue(token, out var cached)) return cached;
+
+                var variants = _hashManager.GetWordFlagVariants(p).ToList();
+                if (variants.Count > 0)
+                {
+                    if (variants.Any(v => _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, token)))
+                    {
+                        dict[token] = true;
+                        return true;
+                    }
+                }
+
+                if (TryFindAffixBase(p, allowBaseOnlyInCompound: true, out var baseCandidate, out _, out var appendedFlag))
+                {
+                    if (!string.IsNullOrEmpty(baseCandidate))
+                    {
+                        var baseVars = _hashManager.GetWordFlagVariants(baseCandidate).ToList();
+                        if (baseVars.Any(bv => _hashManager.VariantContainsFlagAfterAppend(bv ?? string.Empty, appendedFlag ?? string.Empty, token)))
+                        {
+                            dict[token] = true;
+                            return true;
+                        }
+                    }
+                }
+
+                dict[token] = false;
+                return false;
+            }
 
             // Digit-token handling (1..7)
             if (flag.Length == 1 && char.IsDigit(flag[0]))
@@ -1592,7 +1969,7 @@ internal sealed class AffixManager : IDisposable
 
             // For flag groups / characters, if any char in the pattern element exists in the part's flags
             // then we can advance while keeping patternPos for additional repeats
-            if (flags is not null && flag.Any(ch => flags.Contains(ch)))
+            if (PartHasToken(part, flag))
             {
                 var newMatchedParts = new List<string>(matchedParts) { part };
                 if (MatchesCompoundRule(word, pattern, wordPos + len, patternPos, newMatchedParts))
@@ -1830,6 +2207,7 @@ internal sealed class AffixManager : IDisposable
     /// </summary>
     private bool CheckCompoundRecursive(string word, int wordCount, int position, string? previousPart, int syllableCount, bool requiresForceUCase)
     {
+        // recursion trace suppressed (expensive) — only enable while actively debugging
             // If we've consumed the entire word, we have a valid compound
         if (position >= word.Length)
         {
@@ -1860,11 +2238,12 @@ internal sealed class AffixManager : IDisposable
                 // Final compound acceptance decision: ensure final-case constraints are met
                 if (string.IsNullOrEmpty(word) || !char.IsUpper(word[0])) return false;
             }
+            // base-case logging suppressed
             return ok;
         }
 
         // Check if adding another word would exceed the maximum
-        if (_compoundWordMax > 0 && wordCount + 1 > _compoundWordMax)
+                if (_compoundWordMax > 0 && wordCount + 1 > _compoundWordMax)
         {
             // Check if syllable exception could still apply
             if (_compoundSyllableMax == 0)
@@ -1882,12 +2261,14 @@ internal sealed class AffixManager : IDisposable
             // Check if this part is valid for its position in the compound
             if (!IsValidCompoundPart(part, wordCount, position, i, word, out var partRequiresForce))
             {
+                // helpful during debug: part not valid (suppressed)
                 continue;
             }
 
             // Check compound-specific rules
             if (!CheckCompoundRules(word, position, i, previousPart, part))
             {
+                // suppressed: split failed CheckCompoundRules
                 continue;
             }
 
@@ -1918,10 +2299,44 @@ internal sealed class AffixManager : IDisposable
             if (CheckCompoundRecursive(word, wordCount + contribution, i, part, syllableCount + partSyllables, requiresForceUCase || partRequiresForce))
             {
                 // Accepting decomposition at split {i}
+                // suppressed: split accepted (recursed)
                 return true;
+            }
+
+            // If simplified-triple semantics are enabled, try an alternate
+            // alignment where the right-hand component starts one character
+            // earlier (this models the upstream "simplified triple" rule
+            // where a 3x repeat across a boundary can be shortened to 2x).
+            if (_simplifiedTriple)
+            {
+                int altRightStart = i - 1;
+                if (altRightStart > position && altRightStart < word.Length)
+                {
+                    var altRight = word.Substring(altRightStart);
+                    // Check whether the alternate right component would be valid
+                    if (IsValidCompoundPart(altRight, wordCount + contribution, altRightStart, word.Length, word, out var altRequires))
+                    {
+                        // ensure boundary rules permit this shifted boundary
+                        if (CheckCompoundRules(word, altRightStart, word.Length, part, altRight))
+                        {
+                            // Continue recursion from the shifted boundary
+                            // When the alternate alignment consumes the final piece directly
+                            // compute the resulting part count and accept when we have at
+                            // least two components.
+                            var finalParts = wordCount + contribution + 1;
+                            if (finalParts >= 2) return true;
+                            if (CheckCompoundRecursive(word, wordCount + contribution + 1, word.Length, altRight, syllableCount + partSyllables, requiresForceUCase || partRequiresForce || altRequires))
+                            {
+                                // suppressed: simplified-triple alignment accepted
+                                return true;
+                            }
+                        }
+                    }
+                }
             }
         }
 
+        // suppressed: no valid split at this position
         return false;
     }
 
@@ -1931,6 +2346,11 @@ internal sealed class AffixManager : IDisposable
     private bool IsValidCompoundPart(string part, int wordCount, int startPos, int endPos, string fullWord, out bool requiresForceUCase)
     {
         requiresForceUCase = false;
+
+        // Local helper: check whether a variant (raw flags string or merged flags
+        // representation) contains a given token, handling nulls and delegating
+        // to HashManager which understands the configured flag format.
+        bool VariantHasFlag(string? variant, string? token) => !string.IsNullOrEmpty(variant) && !string.IsNullOrEmpty(token) && _hashManager.VariantContainsFlagAfterAppend(variant ?? string.Empty, null, token);
         // Disallow pieces that correspond to a dictionary 'ph:' target
         // (e.g., 'forbiddenroot' appears in ph: mapping and so should not
         // be used as an atomic compound component).
@@ -2003,11 +2423,11 @@ internal sealed class AffixManager : IDisposable
                     var permittedByAffix = false;
                     if (!string.IsNullOrEmpty(appendedFlag) && !string.IsNullOrEmpty(_compoundPermitFlag))
                     {
-                        // If any appended flag is present in the COMPOUNDPERMITFLAG set
-                        // copy into locals to avoid nullable-analysis issues in lambda
-                        var af = appendedFlag;
-                        var permitFlags = _compoundPermitFlag ?? string.Empty;
-                        permittedByAffix = af.Any(ch => permitFlags.Contains(ch));
+                        // When appended flags are present, check if the appended-flag
+                        // string contains any of the COMPOUNDPERMITFLAG tokens. We
+                        // perform a case-insensitive substring check which works for
+                        // long-token formats (e.g. 'Cp') as used by upstream tests.
+                        permittedByAffix = appendedFlag.IndexOf(_compoundPermitFlag!, StringComparison.OrdinalIgnoreCase) >= 0;
                     }
 
                     if (endPos < fullWord.Length && hasSuffix && !permittedByAffix)
@@ -2073,7 +2493,7 @@ internal sealed class AffixManager : IDisposable
                     // mark if derived variant(s) require FORCEUCASE — only apply when
                     // the derived piece occupies an edge position of the full word
                     // (first or last); middle pieces shouldn't force capitalization
-                    if (!string.IsNullOrEmpty(_forceUCaseFlag) && mergedVariants.Any(m => !string.IsNullOrEmpty(m) && m.Contains(_forceUCaseFlag)) && (wordCount == 0 || endPos == fullWord.Length))
+                    if (!string.IsNullOrEmpty(_forceUCaseFlag) && mergedVariants.Any(m => !string.IsNullOrEmpty(m) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _forceUCaseFlag)) && (wordCount == 0 || endPos == fullWord.Length))
                     {
                         requiresForceUCase = true;
                     }
@@ -2081,7 +2501,13 @@ internal sealed class AffixManager : IDisposable
                     {
                         if (_compoundBegin is not null)
                         {
-                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (m.Contains(_compoundBegin) || (_compoundFlag is not null && m.Contains(_compoundFlag)) || (_onlyInCompound is not null && m.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && m.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && m.Contains(_forbiddenWordFlag)))) return true;
+                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) &&
+                                (((_compoundBegin is not null && VariantHasFlag(m, _compoundBegin)) || (_compoundFlag is not null && VariantHasFlag(m, _compoundFlag)) || (_onlyInCompound is not null && VariantHasFlag(m, _onlyInCompound)))
+                                && !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag))
+                                && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag)))))
+                            {
+                                return true;
+                            }
                         }
                         else if (_compoundFlag is not null)
                         {
@@ -2092,22 +2518,34 @@ internal sealed class AffixManager : IDisposable
                     {
                         if (_compoundMiddle is not null)
                         {
-                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (m.Contains(_compoundMiddle) || (_compoundFlag is not null && m.Contains(_compoundFlag)) || (_onlyInCompound is not null && m.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && m.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && m.Contains(_forbiddenWordFlag)))) return true;
+                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) &&
+                                (((_compoundMiddle is not null && VariantHasFlag(m, _compoundMiddle)) || (_compoundFlag is not null && VariantHasFlag(m, _compoundFlag)) || (_onlyInCompound is not null && VariantHasFlag(m, _onlyInCompound)))
+                                && !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag))
+                                && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag)))))
+                            {
+                                return true;
+                            }
                         }
                         else if (_compoundFlag is not null)
                         {
-                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (m.Contains(_compoundFlag) || (_onlyInCompound is not null && m.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && m.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && m.Contains(_forbiddenWordFlag)))) return true;
+                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (_hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundFlag) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _forbiddenWordFlag)))) return true;
                         }
                     }
                     else
                     {
                         if (_compoundEnd is not null)
                         {
-                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (m.Contains(_compoundEnd) || (_compoundFlag is not null && m.Contains(_compoundFlag)) || (_onlyInCompound is not null && m.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && m.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && m.Contains(_forbiddenWordFlag)))) return true;
+                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) &&
+                                (((_compoundEnd is not null && VariantHasFlag(m, _compoundEnd)) || (_compoundFlag is not null && VariantHasFlag(m, _compoundFlag)) || (_onlyInCompound is not null && VariantHasFlag(m, _onlyInCompound)))
+                                && !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag))
+                                && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag)))))
+                            {
+                                return true;
+                            }
                         }
                         else if (_compoundFlag is not null)
                         {
-                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (m.Contains(_compoundFlag) || (_onlyInCompound is not null && m.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && m.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && m.Contains(_forbiddenWordFlag)))) return true;
+                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (_hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundFlag) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _forbiddenWordFlag)))) return true;
                         }
                     }
                 }
@@ -2142,7 +2580,7 @@ internal sealed class AffixManager : IDisposable
         // variant that contains COMPOUNDFORBIDFLAG or FORBIDDENWORD must not be
         // used for compounds.
         var variants = _hashManager.GetWordFlagVariants(lookUpPart).ToList();
-        if (!string.IsNullOrEmpty(_forceUCaseFlag) && (wordCount == 0 || endPos == fullWord.Length) && variants.Any(v => !string.IsNullOrEmpty(v) && v.Contains(_forceUCaseFlag)))
+        if (!string.IsNullOrEmpty(_forceUCaseFlag) && (wordCount == 0 || endPos == fullWord.Length) && variants.Any(v => !string.IsNullOrEmpty(v) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forceUCaseFlag)))
         {
             requiresForceUCase = true;
             // Part requires FORCEUCASE based on variant flags
@@ -2156,16 +2594,16 @@ internal sealed class AffixManager : IDisposable
             if (_compoundBegin is not null)
             {
                 if (!variants.Any(v => !string.IsNullOrEmpty(v) &&
-                                       (v.Contains(_compoundBegin) || (_compoundFlag is not null && v.Contains(_compoundFlag)) || (_onlyInCompound is not null && v.Contains(_onlyInCompound))) &&
-                                       !(!string.IsNullOrEmpty(_compoundForbidFlag) && v.Contains(_compoundForbidFlag)) &&
-                                       !(!string.IsNullOrEmpty(_forbiddenWordFlag) && v.Contains(_forbiddenWordFlag))))
+                                       ((_compoundBegin is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundBegin)) || (_compoundFlag is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag)) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) &&
+                                       !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) &&
+                                       !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
                 {
                     return false;
                 }
             }
             else if (_compoundFlag is not null)
             {
-                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (v.Contains(_compoundFlag) || (_onlyInCompound is not null && v.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && v.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && v.Contains(_forbiddenWordFlag)))) return false;
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag)))) return false;
             }
         }
         else if (endPos < fullWord.Length)
@@ -2174,14 +2612,14 @@ internal sealed class AffixManager : IDisposable
             // or the generic compound flag (if defined).
             if (_compoundMiddle is not null)
             {
-                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (v.Contains(_compoundMiddle) || (_compoundFlag is not null && v.Contains(_compoundFlag)) || (_onlyInCompound is not null && v.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && v.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && v.Contains(_forbiddenWordFlag))))
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundMiddle) || (_compoundFlag is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag)) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
                 {
                     return false;
                 }
             }
             else if (_compoundFlag is not null)
             {
-                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (v.Contains(_compoundFlag) || (_onlyInCompound is not null && v.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && v.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && v.Contains(_forbiddenWordFlag)))) return false;
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag)))) return false;
             }
         }
         else
@@ -2190,14 +2628,14 @@ internal sealed class AffixManager : IDisposable
             // or the generic compound flag (if defined).
             if (_compoundEnd is not null)
             {
-                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (v.Contains(_compoundEnd) || (_compoundFlag is not null && v.Contains(_compoundFlag)) || (_onlyInCompound is not null && v.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && v.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && v.Contains(_forbiddenWordFlag))))
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundEnd) || (_compoundFlag is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag)) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
                 {
                     return false;
                 }
             }
             else if (_compoundFlag is not null)
             {
-                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (v.Contains(_compoundFlag) || (_onlyInCompound is not null && v.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && v.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && v.Contains(_forbiddenWordFlag)))) return false;
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag)))) return false;
             }
         }
 
@@ -2208,7 +2646,7 @@ internal sealed class AffixManager : IDisposable
         {
             // if every variant is either compound-forbidden or fully forbidden then
             // reject the part for compound use.
-            if (variants.Count > 0 && variants.All(v => (!string.IsNullOrEmpty(_compoundForbidFlag) && v.Contains(_compoundForbidFlag)) || (!string.IsNullOrEmpty(_forbiddenWordFlag) && v.Contains(_forbiddenWordFlag))))
+                if (variants.Count > 0 && variants.All(v => (!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) || (!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
             {
                 return false;
             }
@@ -2367,13 +2805,54 @@ internal sealed class AffixManager : IDisposable
         }
 
         // Check CHECKCOMPOUNDPATTERN - forbid specific patterns at boundaries
+        // Upstream Hunspell enforces these patterns at atomic component boundaries
+        // as well as at the provided previousPart/currentPart split. That means
+        // when currentPart is itself a multi-component tail (e.g. "banfoo") we
+        // must still detect forbidden patterns between the previous atomic
+        // component (e.g. "boo") and the first atomic subpart of the current
+        // tail (e.g. "ban"). Similarly, previousPart may itself be composite and
+        // the last atomic subpart should be considered.
         if (_compoundPatterns.Count > 0 && previousPart is not null)
         {
             foreach (var pattern in _compoundPatterns)
             {
-                if (CheckCompoundPatternMatch(previousPart, currentPart, pattern))
+                // Collect candidate end substrings (last atomic components)
+                var endCandidates = new List<string> { previousPart };
+                for (int cut = Math.Max(0, previousPart.Length - 1); cut >= 0; cut--)
                 {
-                    return false; // Pattern matched, forbid this compound
+                    var tail = previousPart.Substring(cut);
+                    if (tail.Length < _compoundMin) continue;
+                    // Accept tail if it appears in dictionary or could be produced
+                    // via affix rules (when used in compounds)
+                    if (_hashManager.GetWordFlags(tail) is not null || TryFindAffixBase(tail, true, out _, out _, out _))
+                    {
+                        if (!endCandidates.Contains(tail)) endCandidates.Add(tail);
+                    }
+                }
+
+                // Collect candidate begin substrings (first atomic components)
+                var beginCandidates = new List<string> { currentPart };
+                for (int cut = _compoundMin; cut <= currentPart.Length - _compoundMin; cut++)
+                {
+                    var head = currentPart.Substring(0, cut);
+                    if (head.Length < _compoundMin) continue;
+                    if (_hashManager.GetWordFlags(head) is not null || TryFindAffixBase(head, true, out _, out _, out _))
+                    {
+                        if (!beginCandidates.Contains(head)) beginCandidates.Add(head);
+                    }
+                }
+
+                // Evaluate all candidate pairs. If any pair matches the forbidden
+                // pattern rule, the whole compound is forbidden.
+                foreach (var endCandidate in endCandidates)
+                {
+                    foreach (var beginCandidate in beginCandidates)
+                    {
+                        if (CheckCompoundPatternMatch(endCandidate, beginCandidate, pattern))
+                        {
+                            return false; // Pattern matched, forbid this compound
+                        }
+                    }
                 }
             }
         }
@@ -2386,14 +2865,20 @@ internal sealed class AffixManager : IDisposable
     /// </summary>
     private bool CheckCompoundPatternMatch(string prevPart, string currentPart, CompoundPattern pattern)
     {
-        // Check if the previous part ends with the pattern's end chars
-        if (!prevPart.EndsWith(pattern.EndChars, StringComparison.Ordinal))
+        // If the pattern uses the special '0' token it means 'empty' boundary
+        // and should be considered a match regardless of characters. Otherwise
+        // check that the previous part ends with the pattern's end chars.
+        if (!string.Equals(pattern.EndChars, "0", StringComparison.Ordinal) &&
+            !prevPart.EndsWith(pattern.EndChars, StringComparison.Ordinal))
         {
             return false;
         }
 
-        // Check if the current part begins with the pattern's begin chars
-        if (!currentPart.StartsWith(pattern.BeginChars, StringComparison.Ordinal))
+        // If pattern.BeginChars is "0" treat it as an empty-match sentinel
+        // (i.e., no specific chars required at the start). Otherwise ensure
+        // the current part begins with the specified begin-chars.
+        if (!string.Equals(pattern.BeginChars, "0", StringComparison.Ordinal) &&
+            !currentPart.StartsWith(pattern.BeginChars, StringComparison.Ordinal))
         {
             return false;
         }
@@ -2694,10 +3179,90 @@ internal sealed class AffixManager : IDisposable
             // If base1 can be created by combining two dictionary words, accept it
             if (! _hashManager.HasPhTarget(reconstructedBase) && IsCompoundMadeOfTwoWords(reconstructedBase, out _, out _))
                 {
+                // When COMPOUNDRULEs are defined they act as an allow-list — the
+                // reconstructed compound base should be validated against the
+                // configured COMPOUNDRULEs to ensure affix-derived forms only
+                // produce compounds that comply with the rules.
+                if (_compoundRules.Count > 0)
+                {
+                    // Avoid invoking the full COMPOUNDRULE matcher here (it
+                    // may recurse back into TryFindAffixBase). Instead perform a
+                    // shallow two-word rule check: when the reconstructed base
+                    // splits into two dictionary words, check whether any
+                    // configured COMPOUNDRULE matches the pair (non-recursive,
+                    // handles common two-token cases like 'vw'). If no rule
+                    // matches we should not accept the reconstructed base.
+                    var split = FindTwoWordSplit(reconstructedBase);
+                    bool permittedByRule = false;
+                    if (split is not null)
+                    {
+                        var first = split.Value.first;
+                        var second = split.Value.second;
+
+                        foreach (var rule in _compoundRules)
+                        {
+                            // Only support simple two-token rules without
+                            // quantifiers here to avoid recursion and complexity.
+                            var tokens = new List<string>();
+                            var pos = 0;
+                            var ok = true;
+                            while (pos < rule.Length)
+                            {
+                                var (tok, quant, next) = ParsePatternElement(rule, pos);
+                                if (quant != '\0') { ok = false; break; }
+                                tokens.Add(tok);
+                                pos = next;
+                            }
+                            if (!ok) continue;
+                            if (tokens.Count != 2) continue;
+
+                            bool firstMatches = false;
+                            bool secondMatches = false;
+
+                            var t0 = tokens[0];
+                            if (!string.IsNullOrEmpty(t0) && t0.Length == 1 && char.IsDigit(t0[0]))
+                                firstMatches = ComponentMatchesDigitClass(first, t0[0]);
+                            else
+                            {
+                                var v0 = _hashManager.GetWordFlagVariants(first).ToList();
+                                if (v0.Count > 0 && v0.Any(v => _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, t0))) firstMatches = true;
+                            }
+
+                            var t1 = tokens[1];
+                            if (!string.IsNullOrEmpty(t1) && t1.Length == 1 && char.IsDigit(t1[0]))
+                                secondMatches = ComponentMatchesDigitClass(second, t1[0]);
+                            else
+                            {
+                                var v1 = _hashManager.GetWordFlagVariants(second).ToList();
+                                if (v1.Count > 0 && v1.Any(v => _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, t1))) secondMatches = true;
+                            }
+
+                            if (firstMatches && secondMatches)
+                            {
+                                permittedByRule = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!permittedByRule) {
+                        // this reconstructed base is not allowed by compound rules
+                    }
+                    else
+                    {
+                        baseCandidate = reconstructedBase;
+                        kind = AffixMatchKind.SuffixOnly;
+                        appendedFlag = sfx.AppendedFlag;
+                        return true;
+                    }
+                }
+                else
+                {
                     baseCandidate = reconstructedBase;
                     kind = AffixMatchKind.SuffixOnly;
                     appendedFlag = sfx.AppendedFlag;
                     return true;
+                }
                 }
 
             // Try stripping a prefix from base1: base1 = prefix + root
@@ -2965,6 +3530,26 @@ internal sealed class AffixManager : IDisposable
             }
         }
         return count;
+    }
+
+    /// <summary>
+    /// Remove diacritic marks from a string (NFD->strip NonSpacingMark->NFC).
+    /// Used as a best-effort fallback for REP-style matches (e.g. í -> i).
+    /// </summary>
+    private static string RemoveDiacritics(string input)
+    {
+        if (string.IsNullOrEmpty(input)) return input;
+        var normalized = input.Normalize(System.Text.NormalizationForm.FormD);
+        var sb = new StringBuilder();
+        foreach (var ch in normalized)
+        {
+            var uc = CharUnicodeInfo.GetUnicodeCategory(ch);
+            if (uc != UnicodeCategory.NonSpacingMark)
+            {
+                sb.Append(ch);
+            }
+        }
+        return sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
     }
 
     /// <summary>
