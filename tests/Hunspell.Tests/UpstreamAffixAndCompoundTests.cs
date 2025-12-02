@@ -608,7 +608,7 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("checkcompoundpattern3")]
     //
     // CIRCUMFIX feature:
-    // [InlineData("circumfix")]  // FAILING: CIRCUMFIX not fully implemented
+    [InlineData("circumfix")]  // re-enabled: CIRCUMFIX now enforced
     //
     // Compound affix advanced cases:
     // [InlineData("compoundaffix3")]  // FAILING: Complex compound affix rules

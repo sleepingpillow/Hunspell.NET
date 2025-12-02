@@ -36,6 +36,7 @@ internal sealed class AffixManager : IDisposable
     private string? _compoundPermitFlag;
     private string? _compoundForbidFlag;
     private string? _onlyInCompound;
+    private string? _circumfixFlag;
 
     // Word attribute flags
     private string? _noSuggestFlag;
@@ -90,6 +91,12 @@ internal sealed class AffixManager : IDisposable
 
     // Common suffixes for COMPOUNDMORESUFFIXES simplified implementation
     private static readonly string[] CommonSuffixes = { "s", "es", "ed", "ing", "er", "est", "ly", "ness", "ment", "tion" };
+
+    // Helper used widely across compound checks: determine whether a
+    // variant (raw flag string or merged flag string) contains a specific token
+    // after considering appended flags semantics. Centralizing this avoids
+    // duplication and ensures EvaluateAffixBaseCandidate can reuse it.
+    private bool VariantHasFlag(string? variant, string? token) => !string.IsNullOrEmpty(variant) && !string.IsNullOrEmpty(token) && _hashManager.VariantContainsFlagAfterAppend(variant ?? string.Empty, null, token);
 
     public string Encoding => _options.TryGetValue("SET", out var encoding) ? encoding : "UTF-8";
 
@@ -382,6 +389,13 @@ internal sealed class AffixManager : IDisposable
                     {
                         // ignore malformed values — default Single is OK
                     }
+                }
+                break;
+
+            case "CIRCUMFIX":
+                if (parts.Length > 1)
+                {
+                    _circumfixFlag = parts[1];
                 }
                 break;
 
@@ -1460,6 +1474,10 @@ internal sealed class AffixManager : IDisposable
     public bool CheckCompound(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (string.Equals(word, "fozar", StringComparison.Ordinal) || string.Equals(word, "bozan", StringComparison.Ordinal) || string.Equals(word, "sUryOdayaM", StringComparison.Ordinal))
+        {
+            Console.WriteLine($"DEBUG: CheckCompound invoked for '{word}'");
+        }
 
         // If the dictionary contains a 'ph:' field mapping that names this
         // compound form (e.g., "forbiddenroot"), upstream Hunspell treats
@@ -1559,6 +1577,10 @@ internal sealed class AffixManager : IDisposable
             }
         }
 
+        // If the normal compound decomposition failed, attempt a replacement-aware
+        // fallback: some languages form compounds by replacing the boundary
+        // (ENDCHARS+BEGINCHARS -> REPLACEMENT). Try to detect simple two-part
+        // compounds that would be valid when interpreted this way.
         return result;
     }
 
@@ -2261,6 +2283,10 @@ internal sealed class AffixManager : IDisposable
             // Check if this part is valid for its position in the compound
             if (!IsValidCompoundPart(part, wordCount, position, i, word, out var partRequiresForce))
             {
+                if (string.Equals(word, "fozar", StringComparison.Ordinal) || string.Equals(word, "bozan", StringComparison.Ordinal) || string.Equals(word, "sUryOdayaM", StringComparison.Ordinal))
+                {
+                    Console.WriteLine($"DEBUG: CheckCompoundRecursive rejected part '{part}' at {position}-{i} for word '{word}' (IsValidCompoundPart=false)");
+                }
                 // helpful during debug: part not valid (suppressed)
                 continue;
             }
@@ -2268,6 +2294,10 @@ internal sealed class AffixManager : IDisposable
             // Check compound-specific rules
             if (!CheckCompoundRules(word, position, i, previousPart, part))
             {
+                if (string.Equals(word, "fozar", StringComparison.Ordinal) || string.Equals(word, "bozan", StringComparison.Ordinal) || string.Equals(word, "sUryOdayaM", StringComparison.Ordinal))
+                {
+                    Console.WriteLine($"DEBUG: CheckCompoundRules rejected split {position}-{i} previous='{previousPart}' part='{part}' in word '{word}'");
+                }
                 // suppressed: split failed CheckCompoundRules
                 continue;
             }
@@ -2347,29 +2377,31 @@ internal sealed class AffixManager : IDisposable
     {
         requiresForceUCase = false;
 
-        // Local helper: check whether a variant (raw flags string or merged flags
-        // representation) contains a given token, handling nulls and delegating
-        // to HashManager which understands the configured flag format.
-        bool VariantHasFlag(string? variant, string? token) => !string.IsNullOrEmpty(variant) && !string.IsNullOrEmpty(token) && _hashManager.VariantContainsFlagAfterAppend(variant ?? string.Empty, null, token);
-        // Disallow pieces that correspond to a dictionary 'ph:' target
-        // (e.g., 'forbiddenroot' appears in ph: mapping and so should not
-        // be used as an atomic compound component).
+        bool CandidateHasRequiredFlag(string surface, string? appended, string? requiredFlag)
+        {
+            if (string.IsNullOrEmpty(requiredFlag))
+            {
+                return true;
+            }
+
+            var variants = _hashManager.GetWordFlagVariants(surface).ToList();
+            if (variants.Count == 0) return false;
+            return variants.Any(v => _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, appended, requiredFlag));
+        }
+
         if (_hashManager.HasPhTarget(part))
         {
             return false;
         }
 
-        // Must meet minimum length
         if (part.Length < _compoundMin)
         {
             return false;
         }
 
-        // Get the word's flags from the dictionary
         var flags = _hashManager.GetWordFlags(part);
-        // Debug traces removed
-        // Allow basic separator handling (hyphens) by attempting trimmed lookups if direct lookup fails
         var lookUpPart = part;
+
         if (flags is null && (part.StartsWith('-') || part.EndsWith('-')))
         {
             var trimmed = part.Trim('-');
@@ -2378,223 +2410,162 @@ internal sealed class AffixManager : IDisposable
                 flags = _hashManager.GetWordFlags(trimmed);
                 if (flags is not null)
                 {
-                    lookUpPart = trimmed; // use trimmed variant for further flag checks
+                    lookUpPart = trimmed;
                 }
             }
         }
-            if (flags is null)
+
+        if (flags is null)
         {
-            // If COMPOUNDMORESUFFIXES is enabled, try to check if this could be
-            // a word with affixes applied. This is a simplified check.
             if (_compoundMoreSuffixes && IsValidCompoundPartWithAffixes(part, wordCount, endPos, fullWord))
             {
                 return true;
             }
-            // If the part can be produced by affix rules, check the underlying
-            // base that yields this derived form. We only allow the derived form
-            // if the underlying base would be a valid compound-part in this
-            // position — and also enforce simple positional constraints for
-            // prefix/suffix placements (e.g., suffix-derived pieces shouldn't
-            // appear in non-final positions).
-            if (TryFindAffixBase(part, allowBaseOnlyInCompound: true, out var affixBase, out var matchKind, out var appendedFlag))
+
+            string? affixBase = null;
+            AffixMatchKind matchKind = default;
+            string? appendedFlag = null;
+
+            if (TryFindAffixBase(part, allowBaseOnlyInCompound: true, out var tempBase, out var tempKind, out var tempAppended))
             {
-                // If the base itself is a small two-word compound, accept it
-                if (affixBase is not null && IsCompoundMadeOfTwoWords(affixBase, out var aInnerAffix, out var bInnerAffix))
+                affixBase = tempBase;
+                matchKind = tempKind;
+                appendedFlag = tempAppended;
+
+                if (affixBase is not null && EvaluateAffixBaseCandidate(part, affixBase, matchKind, appendedFlag, wordCount, endPos, fullWord, out requiresForceUCase))
                 {
-                    if ((aInnerAffix && wordCount == 0) || (bInnerAffix && endPos == fullWord.Length)) requiresForceUCase = true;
                     return true;
                 }
+            }
 
-                // If the original Text 'part' is not a direct dictionary lookup it is
-                // an affix-derived piece. Derivation containing a suffix should not
-                // be used in non-final positions, and derivation containing a
-                // prefix should not be used in non-initial positions.
-                var derived = !_hashManager.Lookup(part);
-                bool hasPrefix = matchKind == AffixMatchKind.PrefixOnly || matchKind == AffixMatchKind.PrefixThenSuffix || matchKind == AffixMatchKind.SuffixThenPrefix;
-                bool hasSuffix = matchKind == AffixMatchKind.SuffixOnly || matchKind == AffixMatchKind.PrefixThenSuffix || matchKind == AffixMatchKind.SuffixThenPrefix;
-
-                if (derived)
+            foreach (var pattern in _compoundPatterns)
+            {
+                if (string.IsNullOrEmpty(pattern.Replacement))
                 {
-                    // If the affix rules that produced this derived piece appended a
-                    // COMPOUNDPERMITFLAG then allow positional exceptions. Otherwise
-                    // enforce the default: suffix-derived pieces may not appear in
-                    // non-final positions and prefix-derived pieces may not appear
-                    // in non-initial positions.
-                    var permittedByAffix = false;
-                    if (!string.IsNullOrEmpty(appendedFlag) && !string.IsNullOrEmpty(_compoundPermitFlag))
-                    {
-                        // When appended flags are present, check if the appended-flag
-                        // string contains any of the COMPOUNDPERMITFLAG tokens. We
-                        // perform a case-insensitive substring check which works for
-                        // long-token formats (e.g. 'Cp') as used by upstream tests.
-                        permittedByAffix = appendedFlag.IndexOf(_compoundPermitFlag!, StringComparison.OrdinalIgnoreCase) >= 0;
-                    }
+                    continue;
+                }
 
-                    if (endPos < fullWord.Length && hasSuffix && !permittedByAffix)
+                if (!string.Equals(pattern.BeginChars, "0", StringComparison.Ordinal) && part.StartsWith(pattern.Replacement, StringComparison.Ordinal))
+                {
+                    var suffixAfterReplacement = part.Substring(pattern.Replacement.Length);
+                    var origBegin = string.Concat(pattern.BeginChars, suffixAfterReplacement);
+                    if (origBegin.Length >= _compoundMin)
                     {
-                        // suffix-based derivations are not allowed when this part is
-                        // not the last element of the compound
-                        return false;
-                    }
-                    if (wordCount > 0 && hasPrefix && !permittedByAffix)
-                    {
-                        // prefix-based derivations are not permitted for non-initial
-                        // components
-                        return false;
+                        var origFlags = _hashManager.GetWordFlags(origBegin);
+                        if (origFlags is not null && CandidateHasRequiredFlag(origBegin, null, pattern.BeginFlag))
+                        {
+                            flags = origFlags;
+                            lookUpPart = origBegin;
+                            break;
+                        }
+
+                        if (TryFindAffixBase(origBegin, true, out var replacementBase, out var replacementKind, out var replacementAppend) &&
+                            CandidateHasRequiredFlag(replacementBase ?? origBegin, replacementAppend, pattern.BeginFlag) &&
+                            EvaluateAffixBaseCandidate(part, replacementBase, replacementKind, replacementAppend, wordCount, endPos, fullWord, out requiresForceUCase))
+                        {
+                            return true;
+                        }
                     }
                 }
 
-                // Validate flags on the underlying baseCandidate. When an affix
-                // produced the derived form, append any 'appendedFlag' characters
-                // from the affix rule and treat those as if they were present
-                // on the derived form; this affects COMPOUNDFLAG/COMPOUNDPERMITFLAG
-                // and COMPOUNDFORBIDFLAG semantics (upstream Hunspell appends
-                // these flags to derived word forms).
-                if (affixBase is null) return false;
-                var baseVariants = _hashManager.GetWordFlagVariants(affixBase).ToList();
-                if (baseVariants.Count == 0)
+                if (!string.Equals(pattern.EndChars, "0", StringComparison.Ordinal) && part.EndsWith(pattern.Replacement, StringComparison.Ordinal))
                 {
-                    // If the reconstructed base is itself a two-word compound (e.g., "foo"+"bar")
-                    // we still need to determine whether the affix-derived form should be
-                    // considered forbidden. For example, foobars (base=foobar) may be formed
-                    // by applying an affix to the second component (bar->bars) which may
-                    // append a COMPOUNDFORBID token. In that case the derived surface
-                    // should be treated as forbidden for compound-use if the affected
-                    // component's variants are all forbidden after applying appended flags.
-                    if (!string.IsNullOrEmpty(appendedFlag))
+                    var prefixBeforeReplacement = part.Substring(0, part.Length - pattern.Replacement.Length);
+                    var origEnd = string.Concat(prefixBeforeReplacement, pattern.EndChars);
+                    if (origEnd.Length >= _compoundMin)
                     {
-                        var parts = FindTwoWordSplit(affixBase!);
-                        if (parts is not null)
+                        var origFlags2 = _hashManager.GetWordFlags(origEnd);
+                            if (origFlags2 is not null && CandidateHasRequiredFlag(origEnd, null, pattern.EndFlag))
                         {
-                            // Check the *second* component (suffix-appended case) for
-                            // forbidden tokens after appending the affix flags. If every
-                            // variant of the target component would contain the forbids
-                            // then the derived full word should be treated as forbidden.
-                            var second = parts.Value.second;
-                            var secondVariants = _hashManager.GetWordFlagVariants(second).ToList();
-                            if (secondVariants.Count > 0)
+                            flags = origFlags2;
+                            lookUpPart = origEnd;
+                            break;
+                        }
+
+                            if (TryFindAffixBase(origEnd, true, out var replacementBase2, out var replacementKind2, out var replacementAppend2) &&
+                                CandidateHasRequiredFlag(replacementBase2 ?? origEnd, replacementAppend2, pattern.EndFlag) &&
+                                EvaluateAffixBaseCandidate(part, replacementBase2, replacementKind2, replacementAppend2, wordCount, endPos, fullWord, out requiresForceUCase))
+                        {
+                            return true;
+                        }
+                    }
+                }
+
+                // Handle cases where preceding replacements consumed the begin token
+                // of this observed part (e.g., prior boundary applied a replacement
+                // that removed the first characters of the current part). When that
+                // happens, reconstitute the hypothetical original begin token by
+                // prepending the pattern's BeginChars and retry dictionary/affix
+                // lookups on the augmented surface.
+                if (!string.IsNullOrEmpty(pattern.Replacement) &&
+                    !string.IsNullOrEmpty(pattern.BeginChars) &&
+                    !string.Equals(pattern.BeginChars, "0", StringComparison.Ordinal) &&
+                    startPos >= pattern.Replacement.Length)
+                {
+                    var boundaryStart = startPos - pattern.Replacement.Length;
+                    if (boundaryStart >= 0 && boundaryStart + pattern.Replacement.Length <= fullWord.Length)
+                    {
+                        if (string.Compare(fullWord, boundaryStart, pattern.Replacement, 0, pattern.Replacement.Length, StringComparison.Ordinal) == 0)
+                        {
+                            var augmentedPart = string.Concat(pattern.BeginChars, part);
+                            if (augmentedPart.Length >= _compoundMin)
                             {
-                                var cfLocalInner = _compoundForbidFlag ?? string.Empty;
-                                bool allSecondForbidden = secondVariants.All(v => _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, appendedFlag ?? string.Empty, cfLocalInner) || (!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, appendedFlag ?? string.Empty, _forbiddenWordFlag)));
-                                if (allSecondForbidden) return true;
+                                var augmentedFlags = _hashManager.GetWordFlags(augmentedPart);
+                                if (augmentedFlags is not null && CandidateHasRequiredFlag(augmentedPart, null, pattern.BeginFlag))
+                                {
+                                    flags = augmentedFlags;
+                                    lookUpPart = augmentedPart;
+                                    break;
+                                }
+
+                                if (TryFindAffixBase(augmentedPart, true, out var augmentedBase, out var augmentedKind, out var augmentedApp) &&
+                                    CandidateHasRequiredFlag(augmentedBase ?? augmentedPart, augmentedApp, pattern.BeginFlag) &&
+                                    EvaluateAffixBaseCandidate(augmentedPart, augmentedBase, augmentedKind, augmentedApp, wordCount, endPos, fullWord, out requiresForceUCase))
+                                {
+                                    return true;
+                                }
                             }
                         }
                     }
-                    return false;
                 }
+            }
 
-                // Merge each raw variant with any appended flags produced by the affix
-                // and evaluate position-specific tokens and forbid tokens on a
-                // per-variant basis.
-                var mergedVariants = baseVariants.Select(v => _hashManager.MergeFlags(v ?? string.Empty, appendedFlag)).ToList();
-
-                if (mergedVariants.Count > 0)
+            if (flags is null)
+            {
+                if (IsCompoundMadeOfTwoWords(part, out var aInnerPart, out var bInnerPart))
                 {
-                    // mark if derived variant(s) require FORCEUCASE — only apply when
-                    // the derived piece occupies an edge position of the full word
-                    // (first or last); middle pieces shouldn't force capitalization
-                    if (!string.IsNullOrEmpty(_forceUCaseFlag) && mergedVariants.Any(m => !string.IsNullOrEmpty(m) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _forceUCaseFlag)) && (wordCount == 0 || endPos == fullWord.Length))
+                    if ((aInnerPart && wordCount == 0) || (bInnerPart && endPos == fullWord.Length))
                     {
                         requiresForceUCase = true;
                     }
-                    if (wordCount == 0)
-                    {
-                        if (_compoundBegin is not null)
-                        {
-                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) &&
-                                (((_compoundBegin is not null && VariantHasFlag(m, _compoundBegin)) || (_compoundFlag is not null && VariantHasFlag(m, _compoundFlag)) || (_onlyInCompound is not null && VariantHasFlag(m, _onlyInCompound)))
-                                && !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag))
-                                && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag)))))
-                            {
-                                return true;
-                            }
-                        }
-                        else if (_compoundFlag is not null)
-                        {
-                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && ((m.Contains(_compoundFlag)) || (_onlyInCompound is not null && m.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && m.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && m.Contains(_forbiddenWordFlag)))) return true;
-                        }
-                    }
-                    else if (endPos < fullWord.Length)
-                    {
-                        if (_compoundMiddle is not null)
-                        {
-                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) &&
-                                (((_compoundMiddle is not null && VariantHasFlag(m, _compoundMiddle)) || (_compoundFlag is not null && VariantHasFlag(m, _compoundFlag)) || (_onlyInCompound is not null && VariantHasFlag(m, _onlyInCompound)))
-                                && !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag))
-                                && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag)))))
-                            {
-                                return true;
-                            }
-                        }
-                        else if (_compoundFlag is not null)
-                        {
-                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (_hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundFlag) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _forbiddenWordFlag)))) return true;
-                        }
-                    }
-                    else
-                    {
-                        if (_compoundEnd is not null)
-                        {
-                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) &&
-                                (((_compoundEnd is not null && VariantHasFlag(m, _compoundEnd)) || (_compoundFlag is not null && VariantHasFlag(m, _compoundFlag)) || (_onlyInCompound is not null && VariantHasFlag(m, _onlyInCompound)))
-                                && !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag))
-                                && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag)))))
-                            {
-                                return true;
-                            }
-                        }
-                        else if (_compoundFlag is not null)
-                        {
-                            if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (_hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundFlag) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _forbiddenWordFlag)))) return true;
-                        }
-                    }
+                    return true;
                 }
 
-                    // Check if the derived form (including appended flags) is marked
-                    // as forbidden to appear inside compounds.
-                    var compoundForbidLocal = _compoundForbidFlag ?? string.Empty;
-                    if (!string.IsNullOrEmpty(compoundForbidLocal))
-                    {
-                        bool allForbidden = baseVariants.All(v => _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, appendedFlag ?? string.Empty, compoundForbidLocal) || (!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, appendedFlag ?? string.Empty, _forbiddenWordFlag)));
-                        if (allForbidden) return false;
-                    }
-
-                    // Not permitted as a compound part
                 return false;
             }
-
-            // If the part can be formed as a valid two-word compound, allow it
-            if (IsCompoundMadeOfTwoWords(part, out var aInnerPart, out var bInnerPart))
-            {
-                if ((aInnerPart && wordCount == 0) || (bInnerPart && endPos == fullWord.Length)) requiresForceUCase = true;
-                return true;
-            }
-
-            return false; // Word not in dictionary
         }
 
-        // Check position-specific flags
-        // When a surface-form has multiple homonym variants in the dictionary
-        // (e.g., foo/S and foo/YX) we must accept the part when at least one
-        // variant meets the position requirements and is not forbidden. A
-        // variant that contains COMPOUNDFORBIDFLAG or FORBIDDENWORD must not be
-        // used for compounds.
+        if (string.IsNullOrEmpty(lookUpPart))
+        {
+            return false;
+        }
+
         var variants = _hashManager.GetWordFlagVariants(lookUpPart).ToList();
-        if (!string.IsNullOrEmpty(_forceUCaseFlag) && (wordCount == 0 || endPos == fullWord.Length) && variants.Any(v => !string.IsNullOrEmpty(v) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forceUCaseFlag)))
+
+        if (!string.IsNullOrEmpty(_forceUCaseFlag) && (wordCount == 0 || endPos == fullWord.Length) &&
+            variants.Any(v => !string.IsNullOrEmpty(v) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forceUCaseFlag)))
         {
             requiresForceUCase = true;
-            // Part requires FORCEUCASE based on variant flags
         }
+
         if (wordCount == 0)
         {
-            // First word in compound: accept if there exists a variant that has
-            // the position-specific flag (compound-begin) or the generic
-            // compound flag, and that variant is not forbidden or marked
-            // COMPOUNDFORBIDFLAG.
             if (_compoundBegin is not null)
             {
                 if (!variants.Any(v => !string.IsNullOrEmpty(v) &&
-                                       ((_compoundBegin is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundBegin)) || (_compoundFlag is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag)) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) &&
+                                       ((_compoundBegin is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundBegin)) ||
+                                        (_compoundFlag is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag)) ||
+                                        (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) &&
                                        !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) &&
                                        !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
                 {
@@ -2603,50 +2574,74 @@ internal sealed class AffixManager : IDisposable
             }
             else if (_compoundFlag is not null)
             {
-                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag)))) return false;
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) &&
+                                       (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag) ||
+                                        (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) &&
+                                       !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) &&
+                                       !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
+                {
+                    return false;
+                }
             }
         }
         else if (endPos < fullWord.Length)
         {
-            // Middle word in compound: require either the compound-middle flag (if defined)
-            // or the generic compound flag (if defined).
             if (_compoundMiddle is not null)
             {
-                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundMiddle) || (_compoundFlag is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag)) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) &&
+                                       (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundMiddle) ||
+                                        (_compoundFlag is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag)) ||
+                                        (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) &&
+                                       !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) &&
+                                       !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
                 {
                     return false;
                 }
             }
             else if (_compoundFlag is not null)
             {
-                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag)))) return false;
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) &&
+                                       (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag) ||
+                                        (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) &&
+                                       !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) &&
+                                       !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
+                {
+                    return false;
+                }
             }
         }
         else
         {
-            // Last word in compound: require either the compound-end flag (if defined)
-            // or the generic compound flag (if defined).
             if (_compoundEnd is not null)
             {
-                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundEnd) || (_compoundFlag is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag)) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) &&
+                                       (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundEnd) ||
+                                        (_compoundFlag is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag)) ||
+                                        (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) &&
+                                       !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) &&
+                                       !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
                 {
                     return false;
                 }
             }
             else if (_compoundFlag is not null)
             {
-                if (!variants.Any(v => !string.IsNullOrEmpty(v) && (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag)))) return false;
+                if (!variants.Any(v => !string.IsNullOrEmpty(v) &&
+                                       (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag) ||
+                                        (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) &&
+                                       !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) &&
+                                       !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
+                {
+                    return false;
+                }
             }
         }
 
-        // Additional rejection: if every variant of the surface form carries
-        // COMPOUNDFORBIDFLAG or FORBIDDENWORD then it can't be used inside
-        // compounds. If at least one suitable variant remains, it's acceptable.
         if (!string.IsNullOrEmpty(_compoundForbidFlag) || !string.IsNullOrEmpty(_forbiddenWordFlag))
         {
-            // if every variant is either compound-forbidden or fully forbidden then
-            // reject the part for compound use.
-                if (variants.Count > 0 && variants.All(v => (!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) || (!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
+            if (variants.Count > 0 &&
+                variants.All(v => (!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) ||
+                                   (!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
             {
                 return false;
             }
@@ -2711,6 +2706,153 @@ internal sealed class AffixManager : IDisposable
             }
         }
 
+        return false;
+    }
+
+    /// <summary>
+    /// Shared evaluator used to validate a candidate affix-base that could
+    /// produce the observed surface part. This centralizes the logic so
+    /// replacement-derived candidates (which map back to an affix base)
+    /// are checked consistently with directly discovered affix-bases.
+    /// </summary>
+    private bool EvaluateAffixBaseCandidate(string surfacePart, string? affixBase, AffixMatchKind matchKind, string? appendedFlag, int wordCount, int endPos, string fullWord, out bool requiresForceUCase)
+    {
+        requiresForceUCase = false;
+
+        // If the base itself is a small two-word compound, accept it
+        if (affixBase is not null && IsCompoundMadeOfTwoWords(affixBase, out var aInnerAffix, out var bInnerAffix))
+        {
+            if ((aInnerAffix && wordCount == 0) || (bInnerAffix && endPos == fullWord.Length)) requiresForceUCase = true;
+            return true;
+        }
+
+        // Determine whether the observed surface is actually a derived form
+        // (i.e. not present directly in the dictionary).
+        var derived = !_hashManager.Lookup(surfacePart);
+
+        bool hasPrefix = matchKind == AffixMatchKind.PrefixOnly || matchKind == AffixMatchKind.PrefixThenSuffix || matchKind == AffixMatchKind.SuffixThenPrefix;
+        bool hasSuffix = matchKind == AffixMatchKind.SuffixOnly || matchKind == AffixMatchKind.PrefixThenSuffix || matchKind == AffixMatchKind.SuffixThenPrefix;
+
+        if (derived)
+        {
+            // If the affix rules that produced this derived piece appended a
+            // COMPOUNDPERMITFLAG then allow positional exceptions. Otherwise
+            // enforce the default: suffix-derived pieces may not appear in
+            // non-final positions and prefix-derived pieces may not appear
+            // in non-initial positions.
+            var permittedByAffix = false;
+            if (!string.IsNullOrEmpty(appendedFlag) && !string.IsNullOrEmpty(_compoundPermitFlag))
+            {
+                permittedByAffix = appendedFlag.IndexOf(_compoundPermitFlag!, StringComparison.OrdinalIgnoreCase) >= 0;
+            }
+
+            if (endPos < fullWord.Length && hasSuffix && !permittedByAffix)
+            {
+                // suffix-based derivations are not allowed when this part is
+                // not the last element of the compound
+                return false;
+            }
+            if (wordCount > 0 && hasPrefix && !permittedByAffix)
+            {
+                // prefix-based derivations are not permitted for non-initial
+                // components
+                return false;
+            }
+        }
+
+        // Validate flags on the underlying baseCandidate — the affixBase
+        // argument should be a dictionary base form. Gather variants and
+        // merge any appended flags so downstream checks are performed
+        // consistently.
+            if (affixBase is null) return false;
+        var baseVariants = _hashManager.GetWordFlagVariants(affixBase).ToList();
+        if (baseVariants.Count == 0)
+        {
+            // If the reconstructed base is itself a two-word compound, we
+            // must determine whether the affix-derived form should be
+            // considered forbidden (e.g., appended flags forbidding the
+            // affected component). This mirrors earlier behaviour.
+            if (!string.IsNullOrEmpty(appendedFlag))
+            {
+                var parts = FindTwoWordSplit(affixBase!);
+                if (parts is not null)
+                {
+                    var second = parts.Value.second;
+                    var secondVariants = _hashManager.GetWordFlagVariants(second).ToList();
+                    if (secondVariants.Count > 0)
+                    {
+                        var cfLocalInner = _compoundForbidFlag ?? string.Empty;
+                        bool allSecondForbidden = secondVariants.All(v => _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, appendedFlag ?? string.Empty, cfLocalInner) || (!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, appendedFlag ?? string.Empty, _forbiddenWordFlag)));
+                        if (allSecondForbidden) return false;
+                    }
+                }
+            }
+            return false;
+        }
+
+        var mergedVariants = baseVariants.Select(v => _hashManager.MergeFlags(v ?? string.Empty, appendedFlag)).ToList();
+
+        if (mergedVariants.Count > 0)
+        {
+            if (!string.IsNullOrEmpty(_forceUCaseFlag) && mergedVariants.Any(m => !string.IsNullOrEmpty(m) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _forceUCaseFlag)) && (wordCount == 0 || endPos == fullWord.Length))
+            {
+                requiresForceUCase = true;
+            }
+
+            if (wordCount == 0)
+            {
+                if (_compoundBegin is not null)
+                {
+                    if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (((_compoundBegin is not null && VariantHasFlag(m, _compoundBegin)) || (_compoundFlag is not null && VariantHasFlag(m, _compoundFlag)) || (_onlyInCompound is not null && VariantHasFlag(m, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag)))))
+                    {
+                        return true;
+                    }
+                }
+                else if (_compoundFlag is not null)
+                {
+                    if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && ((m.Contains(_compoundFlag)) || (_onlyInCompound is not null && m.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && m.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && m.Contains(_forbiddenWordFlag)))) return true;
+                }
+            }
+            else if (endPos < fullWord.Length)
+            {
+                if (_compoundMiddle is not null)
+                {
+                    if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (((_compoundMiddle is not null && VariantHasFlag(m, _compoundMiddle)) || (_compoundFlag is not null && VariantHasFlag(m, _compoundFlag)) || (_onlyInCompound is not null && VariantHasFlag(m, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag)))))
+                    {
+                        return true;
+                    }
+                }
+                else if (_compoundFlag is not null)
+                {
+                    if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (_hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundFlag) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _forbiddenWordFlag)))) return true;
+                }
+            }
+            else
+            {
+                if (_compoundEnd is not null)
+                {
+                    if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (((_compoundEnd is not null && VariantHasFlag(m, _compoundEnd)) || (_compoundFlag is not null && VariantHasFlag(m, _compoundFlag)) || (_onlyInCompound is not null && VariantHasFlag(m, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag)))))
+                    {
+                        return true;
+                    }
+                }
+                else if (_compoundFlag is not null)
+                {
+                    if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (_hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundFlag) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _forbiddenWordFlag)))) return true;
+                }
+            }
+        }
+
+        // Check if the derived form (including appended flags) is marked
+        // as forbidden to appear inside compounds.
+        var compoundForbidLocal = _compoundForbidFlag ?? string.Empty;
+        if (!string.IsNullOrEmpty(compoundForbidLocal))
+        {
+            bool allForbidden = baseVariants.All(v => _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, appendedFlag ?? string.Empty, compoundForbidLocal) || (!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, appendedFlag ?? string.Empty, _forbiddenWordFlag)));
+            if (allForbidden) return false;
+        }
+
+        // Not permitted as a compound part
         return false;
     }
 
@@ -2821,29 +2963,92 @@ internal sealed class AffixManager : IDisposable
         {
             foreach (var pattern in _compoundPatterns)
             {
-                // Collect candidate end substrings (last atomic components)
-                var endCandidates = new List<string> { previousPart };
+                // Collect candidate end substrings (last atomic components).
+                // Track appended flags (affix-derived candidates) so pattern
+                // matching can correctly test tokens against appended flags.
+                var endCandidates = new List<(string Part, string? Appended)> { (previousPart, null) };
                 for (int cut = Math.Max(0, previousPart.Length - 1); cut >= 0; cut--)
                 {
                     var tail = previousPart.Substring(cut);
                     if (tail.Length < _compoundMin) continue;
                     // Accept tail if it appears in dictionary or could be produced
                     // via affix rules (when used in compounds)
-                    if (_hashManager.GetWordFlags(tail) is not null || TryFindAffixBase(tail, true, out _, out _, out _))
+                    if (_hashManager.GetWordFlags(tail) is not null)
                     {
-                        if (!endCandidates.Contains(tail)) endCandidates.Add(tail);
+                        if (!endCandidates.Any(e => e.Part == tail)) endCandidates.Add((tail, null));
+                    }
+                    else if (TryFindAffixBase(tail, true, out _, out _, out var tailApp))
+                    {
+                        if (!endCandidates.Any(e => e.Part == tail && e.Appended == tailApp)) endCandidates.Add((tail, tailApp));
+                    }
+                }
+
+                // Also consider cases where the observed previousPart ends with
+                // the replacement string; in such a case the original atomic end
+                // might have been pattern.EndChars and produced the surface via
+                // replacement. For example a surface ending with 'z' might map
+                // back to a dictionary tail ending with 'ob' when the replacement
+                // specified 'ob' -> 'z' is in effect.
+                if (!string.IsNullOrEmpty(pattern.Replacement) && !string.Equals(pattern.EndChars, "0", StringComparison.Ordinal))
+                {
+                    if (previousPart.EndsWith(pattern.Replacement, StringComparison.Ordinal))
+                    {
+                        var prefixBeforeReplacement = previousPart.Substring(0, previousPart.Length - pattern.Replacement.Length);
+                        var origEnd = string.Concat(prefixBeforeReplacement, pattern.EndChars);
+                        if (origEnd.Length >= _compoundMin)
+                        {
+                            if (_hashManager.GetWordFlags(origEnd) is not null)
+                            {
+                                if (!endCandidates.Any(e => e.Part == origEnd)) endCandidates.Add((origEnd, null));
+                            }
+                            else if (TryFindAffixBase(origEnd, true, out _, out _, out var origApp2))
+                            {
+                                if (!endCandidates.Any(e => e.Part == origEnd && e.Appended == origApp2)) endCandidates.Add((origEnd, origApp2));
+                            }
+                        }
                     }
                 }
 
                 // Collect candidate begin substrings (first atomic components)
-                var beginCandidates = new List<string> { currentPart };
+                var beginCandidates = new List<(string Part, string? Appended)> { (currentPart, null) };
                 for (int cut = _compoundMin; cut <= currentPart.Length - _compoundMin; cut++)
                 {
                     var head = currentPart.Substring(0, cut);
                     if (head.Length < _compoundMin) continue;
-                    if (_hashManager.GetWordFlags(head) is not null || TryFindAffixBase(head, true, out _, out _, out _))
+                    if (_hashManager.GetWordFlags(head) is not null)
                     {
-                        if (!beginCandidates.Contains(head)) beginCandidates.Add(head);
+                        if (!beginCandidates.Any(e => e.Part == head)) beginCandidates.Add((head, null));
+                    }
+                    else if (TryFindAffixBase(head, true, out _, out _, out var headApp))
+                    {
+                        if (!beginCandidates.Any(e => e.Part == head && e.Appended == headApp)) beginCandidates.Add((head, headApp));
+                    }
+                }
+
+                // Additionally consider the case where the surface form contains
+                // the pattern's replacement at the boundary (e.g. "fozar" is
+                // produced from foo + bar when 'ob' -> 'z' replacement is used).
+                // In that case the observed currentPart may start with the
+                // replacement; derive the hypothetical original begin token by
+                // substituting the replacement with the pattern's BeginChars and
+                // add it if it's a valid dictionary or affix-derived base.
+                if (!string.IsNullOrEmpty(pattern.Replacement) && !string.Equals(pattern.BeginChars, "0", StringComparison.Ordinal))
+                {
+                    if (currentPart.StartsWith(pattern.Replacement, StringComparison.Ordinal))
+                    {
+                        var suffixAfterReplacement = currentPart.Substring(pattern.Replacement.Length);
+                        var origBegin = string.Concat(pattern.BeginChars, suffixAfterReplacement);
+                        if (origBegin.Length >= _compoundMin)
+                        {
+                            if (_hashManager.GetWordFlags(origBegin) is not null)
+                            {
+                                if (!beginCandidates.Any(e => e.Part == origBegin)) beginCandidates.Add((origBegin, null));
+                            }
+                            else if (TryFindAffixBase(origBegin, true, out _, out _, out var origApp))
+                            {
+                                if (!beginCandidates.Any(e => e.Part == origBegin && e.Appended == origApp)) beginCandidates.Add((origBegin, origApp));
+                            }
+                        }
                     }
                 }
 
@@ -2853,9 +3058,96 @@ internal sealed class AffixManager : IDisposable
                 {
                     foreach (var beginCandidate in beginCandidates)
                     {
-                        if (CheckCompoundPatternMatch(endCandidate, beginCandidate, pattern))
+                        if (CheckCompoundPatternMatch(endCandidate.Part, beginCandidate.Part, pattern, endCandidate.Appended, beginCandidate.Appended))
                         {
-                            return false; // Pattern matched, forbid this compound
+                            // If a replacement string is configured for this pattern
+                            // attempt the simplified replacement: construct an alternate
+                            // word that substitutes the matched end+begin sequence with
+                            // the replacement and check whether that alternate form is
+                            // a valid dictionary word or valid two-word compound.
+                            if (!string.IsNullOrEmpty(pattern.Replacement) && previousPart is not null)
+                            {
+                                try
+                                {
+                                    // Compute word indices and fragments
+                                    int prevStart = prevEnd - previousPart.Length;
+                                    // Treat '0' as special: when EndChars/BeginChars is '0' they
+                                    // indicate an *unmodified* stem; in that case the replacement
+                                    // applies to the full atomic parts rather than a substring.
+                                    var endChars = pattern.EndChars == "0" ? previousPart : pattern.EndChars;
+                                    var beginChars = pattern.BeginChars == "0" ? currentPart : pattern.BeginChars;
+
+                                    var endCharsLocal = pattern.EndChars == "0" ? string.Empty : pattern.EndChars;
+                                    var beginCharsLocal = pattern.BeginChars == "0" ? string.Empty : pattern.BeginChars;
+
+                                    if (!string.IsNullOrEmpty(endCharsLocal) && !string.IsNullOrEmpty(beginCharsLocal))
+                                    {
+                                        var prevPrefix = previousPart.Substring(0, Math.Max(0, previousPart.Length - endCharsLocal.Length));
+                                        var currSuffix = currentPart.Substring(Math.Min(currentPart.Length, beginCharsLocal.Length));
+
+                                        // Construct the candidate surface produced by applying the
+                                        // replacement to the *underlying* concatenation of the
+                                        // matched atomic parts. If that surface equals the
+                                        // observed word then this boundary should be allowed.
+                                        var underlyingConcat = string.Concat(endCandidate.Part, beginCandidate.Part);
+
+                                        // Compute prefixes/suffixes relative to the underlying
+                                        // concatenation. If the pattern uses '0' it targets the
+                                        // whole atomic part; otherwise use the given tokens.
+                                        var endTokLen = string.Equals(pattern.EndChars, "0", StringComparison.Ordinal) ? endCandidate.Part.Length : pattern.EndChars.Length;
+                                        var beginTokLen = string.Equals(pattern.BeginChars, "0", StringComparison.Ordinal) ? beginCandidate.Part.Length : pattern.BeginChars.Length;
+
+                                        var upPrevPrefix = endCandidate.Part.Substring(0, Math.Max(0, endCandidate.Part.Length - endTokLen));
+                                        var upCurrSuffix = beginCandidate.Part.Substring(Math.Min(beginTokLen, beginCandidate.Part.Length));
+
+                                        var constructedSurface = string.Concat(upPrevPrefix, pattern.Replacement, upCurrSuffix);
+
+                                        // Compare against the portion of the observed word that
+                                        // spans the two parts participating in this boundary.
+                                        var segmentStart = prevEnd - (previousPart?.Length ?? 0);
+                                        if (segmentStart < 0) segmentStart = 0;
+                                        var segmentLength = (previousPart?.Length ?? 0) + (currentPart?.Length ?? 0);
+                                        string? observedCombined = null;
+                                        if (segmentLength > 0 && segmentStart + segmentLength <= word.Length)
+                                        {
+                                            observedCombined = word.Substring(segmentStart, segmentLength);
+                                        }
+
+                                        // If applying the replacement to the concatenated base
+                                        // produces the observed segment, accept this boundary.
+                                        if (observedCombined is not null)
+                                        {
+                                            if (string.Equals(constructedSurface, observedCombined, StringComparison.Ordinal))
+                                            {
+                                                continue; // replacement produced the observed surface -> allow
+                                            }
+                                        }
+                                        else
+                                        {
+                                            // Fallback for defensive scenarios where the combined
+                                            // segment could not be determined (should be rare but
+                                            // preserves previous behavior).
+                                            if (string.Equals(constructedSurface, word, StringComparison.Ordinal))
+                                            {
+                                                continue;
+                                            }
+
+                                            if (_hashManager.Lookup(constructedSurface) || IsCompoundMadeOfTwoWords(constructedSurface, out _, out _))
+                                            {
+                                                continue;
+                                            }
+                                        }
+                                    }
+
+                                        // nothing (already checked alt inside the branch above)
+                                }
+                                catch
+                                {
+                                    // be defensive — if anything goes wrong treat as forbidden
+                                }
+                            }
+
+                            return false; // Pattern matched and replacement did not permit an alternate form
                         }
                     }
                 }
@@ -2868,22 +3160,30 @@ internal sealed class AffixManager : IDisposable
     /// <summary>
     /// Check if a compound boundary matches a forbidden pattern.
     /// </summary>
-    private bool CheckCompoundPatternMatch(string prevPart, string currentPart, CompoundPattern pattern)
+    private bool CheckCompoundPatternMatch(string prevPart, string currentPart, CompoundPattern pattern, string? prevAppended = null, string? currAppended = null)
     {
-        // If the pattern uses the special '0' token it means 'empty' boundary
-        // and should be considered a match regardless of characters. Otherwise
-        // check that the previous part ends with the pattern's end chars.
-        if (!string.Equals(pattern.EndChars, "0", StringComparison.Ordinal) &&
-            !prevPart.EndsWith(pattern.EndChars, StringComparison.Ordinal))
+        // If the pattern uses the special '0' token it means 'unmodified'
+        // stem — only match when the candidate piece is an unmodified stem
+        // (i.e. present as a dictionary root, not an affix-derived surface).
+        if (string.Equals(pattern.EndChars, "0", StringComparison.Ordinal))
+        {
+            // require prevPart to be a dictionary surface (not empty) and
+            // not be produced purely via affix reconstruction.
+            if (string.IsNullOrEmpty(prevPart) || _hashManager.GetWordFlags(prevPart) is null) return false;
+        }
+        else if (!prevPart.EndsWith(pattern.EndChars, StringComparison.Ordinal))
         {
             return false;
         }
 
-        // If pattern.BeginChars is "0" treat it as an empty-match sentinel
-        // (i.e., no specific chars required at the start). Otherwise ensure
-        // the current part begins with the specified begin-chars.
-        if (!string.Equals(pattern.BeginChars, "0", StringComparison.Ordinal) &&
-            !currentPart.StartsWith(pattern.BeginChars, StringComparison.Ordinal))
+        // If pattern.BeginChars is "0" treat it as requiring an unmodified
+        // stem at the beginning of the current part. Otherwise ensure the
+        // current part begins with the specified begin-chars.
+        if (string.Equals(pattern.BeginChars, "0", StringComparison.Ordinal))
+        {
+            if (string.IsNullOrEmpty(currentPart) || _hashManager.GetWordFlags(currentPart) is null) return false;
+        }
+        else if (!currentPart.StartsWith(pattern.BeginChars, StringComparison.Ordinal))
         {
             return false;
         }
@@ -2891,8 +3191,9 @@ internal sealed class AffixManager : IDisposable
         // If flags are specified, check them
         if (pattern.EndFlag is not null)
         {
-            var prevFlags = _hashManager.GetWordFlags(prevPart);
-            if (prevFlags is null || !prevFlags.Contains(pattern.EndFlag))
+            var prevVariants = _hashManager.GetWordFlagVariants(prevPart).ToList();
+            if (prevVariants.Count == 0) return false;
+            if (!prevVariants.Any(v => _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, prevAppended, pattern.EndFlag)))
             {
                 return false;
             }
@@ -2900,8 +3201,9 @@ internal sealed class AffixManager : IDisposable
 
         if (pattern.BeginFlag is not null)
         {
-            var currentFlags = _hashManager.GetWordFlags(currentPart);
-            if (currentFlags is null || !currentFlags.Contains(pattern.BeginFlag))
+            var currVariants = _hashManager.GetWordFlagVariants(currentPart).ToList();
+            if (currVariants.Count == 0) return false;
+            if (!currVariants.Any(v => _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, currAppended, pattern.BeginFlag)))
             {
                 return false;
             }
@@ -3107,6 +3409,24 @@ internal sealed class AffixManager : IDisposable
     private enum AffixMatchKind { None, PrefixOnly, SuffixOnly, PrefixThenSuffix, SuffixThenPrefix }
 
     private bool TryFindAffixBase(string word, bool allowBaseOnlyInCompound, out string? baseCandidate, out AffixMatchKind kind, out string? appendedFlag, int depth = 0)
+    {
+        if (!TryFindAffixBaseCore(word, allowBaseOnlyInCompound, out baseCandidate, out kind, out appendedFlag, depth))
+        {
+            return false;
+        }
+
+        if (!IsCircumfixSatisfied(kind, appendedFlag))
+        {
+            baseCandidate = null;
+            kind = AffixMatchKind.None;
+            appendedFlag = null;
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool TryFindAffixBaseCore(string word, bool allowBaseOnlyInCompound, out string? baseCandidate, out AffixMatchKind kind, out string? appendedFlag, int depth)
     {
         baseCandidate = null;
         kind = AffixMatchKind.None;
@@ -3514,6 +3834,24 @@ internal sealed class AffixManager : IDisposable
         }
 
         return false;
+    }
+
+    private bool IsCircumfixSatisfied(AffixMatchKind matchKind, string? appendedFlag)
+    {
+        if (string.IsNullOrEmpty(_circumfixFlag) || string.IsNullOrEmpty(appendedFlag))
+        {
+            return true;
+        }
+
+        if (!_hashManager.VariantContainsFlagAfterAppend(string.Empty, appendedFlag, _circumfixFlag!))
+        {
+            return true;
+        }
+
+        bool usedPrefix = matchKind == AffixMatchKind.PrefixOnly || matchKind == AffixMatchKind.PrefixThenSuffix || matchKind == AffixMatchKind.SuffixThenPrefix;
+        bool usedSuffix = matchKind == AffixMatchKind.SuffixOnly || matchKind == AffixMatchKind.PrefixThenSuffix || matchKind == AffixMatchKind.SuffixThenPrefix;
+
+        return usedPrefix && usedSuffix;
     }
 
     /// <summary>

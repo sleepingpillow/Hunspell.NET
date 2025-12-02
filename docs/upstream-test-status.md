@@ -8,10 +8,10 @@ This document tracks the status of Hunspell.NET's compatibility with the upstrea
 |----------|--------|-----------|-------|-----------|
 | GoodWords (Root Level) | 73 | 41 | 114 | 64% |
 | GoodWords (Nested) | 20 | 0 | 20 | 100% |
-| WrongWords (Root Level) | 74 | 23 | 97 | 76% |
+| WrongWords (Root Level) | 75 | 22 | 97 | 77% |
 | WrongWords (Nested) | 20 | 0 | 20 | 100% |
 | Suggestions | 6 | 0 | 6 | 100% |
-| **Total** | **193** | **64** | **257** | **75%** |
+| **Total** | **194** | **63** | **257** | **75%** |
 
 *All 193 active tests are passing. The 64 commented-out tests represent features not yet implemented.*
 
@@ -49,6 +49,10 @@ The following upstream test categories are fully passing:
 - ✅ CHECKCOMPOUNDDUP (`checkcompounddup`)
 - ✅ CHECKCOMPOUNDTRIPLE (`checkcompoundtriple`)
 - ✅ CHECKCOMPOUNDREP basic (`checkcompoundrep2`)
+- ✅ CHECKCOMPOUNDPATTERN replacements (`checkcompoundpattern3`, `checkcompoundpattern4`)
+
+#### Advanced Affix Features
+- ✅ CIRCUMFIX superlatives (`circumfix`)
 
 #### Swedish/Scandinavian
 - ✅ Swedish directives (`swedish/directives`)
@@ -69,8 +73,6 @@ The following test categories are not yet fully implemented:
 #### CHECKCOMPOUNDPATTERN
 - ❌ `checkcompoundpattern` - Pattern matching at compound boundaries
 - ❌ `checkcompoundpattern2` - Advanced pattern matching
-- ❌ `checkcompoundpattern3` - Pattern with replacements
-- ❌ `checkcompoundpattern4` - Complex patterns
 
 #### COMPLEXPREFIXES (Right-to-Left Languages)
 - ❌ `complexprefixes` - RTL prefix handling
@@ -98,7 +100,6 @@ The following test categories are not yet fully implemented:
 #### Advanced Features
 - ❌ `affixes` - Advanced affix condition handling
 - ❌ `alias3` - Advanced alias handling
-- ❌ `circumfix` - CIRCUMFIX directive (partial)
 - ❌ `condition` - Advanced condition matching
 - ❌ `conditionalprefix` - Conditional prefix application
 - ❌ `encoding` - Non-UTF8 encoding handling
@@ -147,8 +148,7 @@ Based on the failing tests, the following areas should be prioritized for implem
 ### Medium Priority
 1. **German Compounding** - Full German compound word support
 2. **COMPLEXPREFIXES** - Right-to-left language support
-3. **CIRCUMFIX** - Circumfix affix type support
-4. **Advanced NEEDAFFIX** - Complex NEEDAFFIX scenarios
+3. **Advanced NEEDAFFIX** - Complex NEEDAFFIX scenarios
 
 ### Lower Priority
 1. **Morphological Analysis** - Word form analysis
