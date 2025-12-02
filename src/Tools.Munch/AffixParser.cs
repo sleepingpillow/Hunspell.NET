@@ -86,7 +86,8 @@ namespace Tools.Munch
                 if (parts.Length < 3)
                     continue;
 
-                if ((parts[0] == "PFX" || parts[0] == "SFX") && parts.Length >= 4)
+                // Distinguish header line from entry line by checking if parts[3] is numeric
+                if ((parts[0] == "PFX" || parts[0] == "SFX") && parts.Length >= 4 && int.TryParse(parts[3], out var _))
                 {
                     // header line: PFX A Y <num>
                     current = new Affix { Flag = parts[1][0], IsPrefix = parts[0] == "PFX" };

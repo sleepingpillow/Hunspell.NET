@@ -20,6 +20,7 @@ public class CheckCompoundPatternUpstreamTests
     }
 
     [Theory]
+    [InlineData("checkcompoundpattern")]
     [InlineData("checkcompoundpattern2")]
     [InlineData("checkcompoundpattern3")]
     [InlineData("checkcompoundpattern4")]

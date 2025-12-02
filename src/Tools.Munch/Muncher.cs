@@ -79,69 +79,43 @@ namespace Tools.Munch
             // Track affixes recorded for roots
             var affMap = new Dictionary<string, HashSet<char>>(StringComparer.Ordinal);
 
+            // --- Upstream-style candidate collection and validation ---
+            // For each word, collect all possible root candidates (via prefix/suffix/cross-product)
+            var rootCandidates = new Dictionary<string, List<(string root, string affixType, char affixFlag)>>(StringComparer.Ordinal);
             foreach (var w in words)
             {
-                // check suffix derived -> root (respecting condition bitmasks)
+                var candidates = new List<(string root, string affixType, char affixFlag)>();
+                // Suffix roots
                 foreach (var sx in aff.Suffixes)
                 {
                     foreach (var ent in sx.Entries)
                     {
                         var app = ent.Appnd ?? string.Empty;
-                        // For suffix matching, ensure the word ends with the appended string (if any)
                         if (app.Length > 0 && !w.EndsWith(app, StringComparison.Ordinal))
                             continue;
-
                         int tlen = w.Length - app.Length;
-                        if (tlen <= 0)
-                            continue;
-
-                        // tlen + strip length must be at least numConds per original logic
-                        if (tlen + (ent.Strip?.Length ?? 0) < ent.NumConds)
-                            continue;
-
+                        if (tlen <= 0) continue;
+                        if (tlen + (ent.Strip?.Length ?? 0) < ent.NumConds) continue;
                         var stripped = w.Substring(0, tlen);
                         if (!string.IsNullOrEmpty(ent.Strip))
                             stripped = stripped + ent.Strip;
-
-                        // check conditions across the last ent.NumConds characters of stripped
                         bool condOk = true;
                         for (int condIndex = 0; condIndex < ent.NumConds; condIndex++)
                         {
                             int pos = stripped.Length - ent.NumConds + condIndex;
-                            if (pos < 0 || pos >= stripped.Length)
-                            {
-                                condOk = false;
-                                break;
-                            }
+                            if (pos < 0 || pos >= stripped.Length) { condOk = false; break; }
                             var ch = (byte)stripped[pos];
                             var mask = ent.ConditionsMask[ch];
-                            if ((mask & (1 << condIndex)) == 0)
-                            {
-                                condOk = false;
-                                break;
-                            }
+                            if ((mask & (1 << condIndex)) == 0) { condOk = false; break; }
                         }
-
-                        if (!condOk)
-                            continue;
-
+                        if (!condOk) continue;
                         if (baseWordSet.Contains(stripped))
                         {
-                            var se = wordMap[stripped];
-                            if (!string.IsNullOrEmpty(se.Flags) && aff.OnlyInCompound.Overlaps(se.Flags.ToCharArray()))
-                                continue; // root is only valid inside compounds
-                            // mark that stripped is the root candidate and we can remove the derived w
-                            keep[w] = false;
-                            if (!affMap.TryGetValue(stripped, out var hs))
-                            {
-                                hs = new HashSet<char>();
-                                affMap[stripped] = hs;
-                            }
-                            hs.Add(sx.Flag);
+                            candidates.Add((stripped, "suffix", sx.Flag));
                         }
                     }
                 }
-
+                // Prefix roots
                 foreach (var px in aff.Prefixes)
                 {
                     foreach (var ent in px.Entries)
@@ -149,150 +123,119 @@ namespace Tools.Munch
                         var app = ent.Appnd ?? string.Empty;
                         if (app.Length > 0 && !w.StartsWith(app, StringComparison.Ordinal))
                             continue;
-
                         int tlen = w.Length - app.Length;
-                        if (tlen <= 0)
-                            continue;
-
-                        if (tlen + (ent.Strip?.Length ?? 0) < ent.NumConds)
-                            continue;
-
+                        if (tlen <= 0) continue;
+                        if (tlen + (ent.Strip?.Length ?? 0) < ent.NumConds) continue;
                         var stripped = w.Substring(app.Length);
                         if (!string.IsNullOrEmpty(ent.Strip))
                             stripped = ent.Strip + stripped;
-
-                        // check conditions across the first ent.NumConds characters of stripped
                         bool condOk = true;
                         for (int condIndex = 0; condIndex < ent.NumConds; condIndex++)
                         {
-                            int pos = condIndex; // first characters
-                            if (pos < 0 || pos >= stripped.Length)
-                            {
-                                condOk = false;
-                                break;
-                            }
+                            int pos = condIndex;
+                            if (pos < 0 || pos >= stripped.Length) { condOk = false; break; }
                             var ch = (byte)stripped[pos];
                             var mask = ent.ConditionsMask[ch];
-                            if ((mask & (1 << condIndex)) == 0)
-                            {
-                                condOk = false;
-                                break;
-                            }
+                            if ((mask & (1 << condIndex)) == 0) { condOk = false; break; }
                         }
-
-                        if (!condOk)
-                            continue;
-
+                        if (!condOk) continue;
                         if (baseWordSet.Contains(stripped))
                         {
-                            var se2 = wordMap[stripped];
-                            if (!string.IsNullOrEmpty(se2.Flags) && aff.OnlyInCompound.Overlaps(se2.Flags.ToCharArray()))
-                                continue;
-                            keep[w] = false;
-                            if (!affMap.TryGetValue(stripped, out var hs))
-                            {
-                                hs = new HashSet<char>();
-                                affMap[stripped] = hs;
-                            }
-                            hs.Add(px.Flag);
+                            candidates.Add((stripped, "prefix", px.Flag));
                         }
                     }
                 }
-
-                // try cross-product: prefix + suffix both applied when single-sided matching didn't find a root
-                // This emulates the original munch behavior where prefixes and suffixes can be combined if both
-                // entries allow cross-product (XProduct).
+                // Cross-product roots
                 if (aff.Prefixes.Count > 0 && aff.Suffixes.Count > 0)
                 {
-                    bool removedByPair = false;
                     foreach (var px in aff.Prefixes)
                     {
                         foreach (var pent in px.Entries)
                         {
-                            if (!pent.XProduct)
-                                continue; // prefix must allow cross-product
+                            if (!pent.XProduct) continue;
                             var papp = pent.Appnd ?? string.Empty;
-                            if (papp.Length > 0 && !w.StartsWith(papp, StringComparison.Ordinal))
-                                continue;
-
+                            if (papp.Length > 0 && !w.StartsWith(papp, StringComparison.Ordinal)) continue;
                             foreach (var sx in aff.Suffixes)
                             {
                                 foreach (var sent in sx.Entries)
                                 {
-                                    if (!sent.XProduct)
-                                        continue; // suffix must allow cross
+                                    if (!sent.XProduct) continue;
                                     var sapp = sent.Appnd ?? string.Empty;
-                                    if (sapp.Length > 0 && !w.EndsWith(sapp, StringComparison.Ordinal))
-                                        continue;
-
+                                    if (sapp.Length > 0 && !w.EndsWith(sapp, StringComparison.Ordinal)) continue;
                                     var midStart = papp.Length;
                                     var midLen = w.Length - papp.Length - sapp.Length;
-                                    if (midLen <= 0)
-                                        continue;
+                                    if (midLen <= 0) continue;
                                     var mid = w.Substring(midStart, midLen);
-
                                     var candidateRoot = (string.IsNullOrEmpty(pent.Strip) ? string.Empty : pent.Strip) + mid + (string.IsNullOrEmpty(sent.Strip) ? string.Empty : sent.Strip);
-
-                                    // both prefix and suffix conditions must match on candidateRoot
+                                    bool condOk = true;
                                     if (pent.NumConds > 0)
                                     {
-                                        if (candidateRoot.Length < pent.NumConds)
-                                            continue;
-                                        bool ok = true;
+                                        if (candidateRoot.Length < pent.NumConds) continue;
                                         for (int ci = 0; ci < pent.NumConds; ci++)
                                         {
                                             var ch = (byte)candidateRoot[ci];
-                                            if ((pent.ConditionsMask[ch] & (1 << ci)) == 0)
-                                            {
-                                                ok = false; break;
-                                            }
+                                            if ((pent.ConditionsMask[ch] & (1 << ci)) == 0) { condOk = false; break; }
                                         }
-                                        if (!ok) continue;
                                     }
-
+                                    if (!condOk) continue;
                                     if (sent.NumConds > 0)
                                     {
-                                        if (candidateRoot.Length < sent.NumConds)
-                                            continue;
-                                        bool ok = true;
+                                        if (candidateRoot.Length < sent.NumConds) continue;
                                         for (int ci = 0; ci < sent.NumConds; ci++)
                                         {
                                             int pos = candidateRoot.Length - sent.NumConds + ci;
                                             var ch = (byte)candidateRoot[pos];
-                                            if ((sent.ConditionsMask[ch] & (1 << ci)) == 0)
-                                            {
-                                                ok = false; break;
-                                            }
+                                            if ((sent.ConditionsMask[ch] & (1 << ci)) == 0) { condOk = false; break; }
                                         }
-                                        if (!ok) continue;
                                     }
-
+                                    if (!condOk) continue;
                                     if (baseWordSet.Contains(candidateRoot))
                                     {
-                                        var ce = wordMap[candidateRoot];
-                                        if (!string.IsNullOrEmpty(ce.Flags) && aff.OnlyInCompound.Overlaps(ce.Flags.ToCharArray()))
-                                            continue;
-                                        keep[w] = false;
-                                        if (!affMap.TryGetValue(candidateRoot, out var hs))
-                                        {
-                                            hs = new HashSet<char>();
-                                            affMap[candidateRoot] = hs;
-                                        }
-                                        hs.Add(px.Flag);
-                                        hs.Add(sx.Flag);
-                                        removedByPair = true;
-                                        break;
+                                        // For cross-product, add both prefix and suffix flags
+                                        candidates.Add((candidateRoot, "cross-prefix", px.Flag));
+                                        candidates.Add((candidateRoot, "cross-suffix", sx.Flag));
                                     }
                                 }
-                                if (removedByPair) break;
                             }
-                            if (removedByPair) break;
                         }
-                        if (removedByPair) break;
                     }
                 }
+                if (candidates.Count > 0)
+                    rootCandidates[w] = candidates;
+            }
 
-                // If still not removed, attempt to see if the word is a compound of existing base words
+            // Now, for each word with candidates, validate and mark removable
+            foreach (var kvp in rootCandidates)
+            {
+                var w = kvp.Key;
+                var candidates = kvp.Value;
+                
+                // For each candidate, check if root exists and respects only-in-compound flags
+                foreach (var cand in candidates)
+                {
+                    if (!baseWordSet.Contains(cand.root))
+                        continue;
+                    
+                    // Check if root has only-in-compound flag
+                    var rootEntry = wordMap[cand.root];
+                    if (!string.IsNullOrEmpty(rootEntry.Flags) && aff.OnlyInCompound.Overlaps(rootEntry.Flags.ToCharArray()))
+                        continue; // root is only valid inside compounds, skip
+                    
+                    // This candidate is valid, mark word removable and record affix
+                    keep[w] = false;
+                    if (!affMap.TryGetValue(cand.root, out var hs))
+                    {
+                        hs = new HashSet<char>();
+                        affMap[cand.root] = hs;
+                    }
+                    hs.Add(cand.affixFlag);
+                }
+            }
+
+            // Check compound words: try to build from existing base words
+            foreach (var w in words)
+            {
+                // If still not removed by affix matching, attempt to see if the word is a compound of existing base words
                 if (keep[w])
                 {
                     var (baseWord, _) = ParseDicLine(w);
@@ -643,7 +586,7 @@ namespace Tools.Munch
                         var ordSuffixMap = new Dictionary<string, string>(StringComparer.InvariantCultureIgnoreCase)
                         {
                             // unit ordinals -> units
-                            {"första", "en"}, {"först", "en"}, {"förstA", "en"}, {"andra", "två"}, {"tredje", "tre"}, {"fjärde", "fyra"}, {"femte", "fem"}, {"sjätte", "sex"}, {"sjunde", "sju"}, {"åttonde", "åtta"}, {"åtton", "åtta"}, {"nionde", "nio"}, {"tionde", "tio"},
+                            {"första", "en"}, {"först", "en"}, {"andra", "två"}, {"tredje", "tre"}, {"fjärde", "fyra"}, {"femte", "fem"}, {"sjätte", "sex"}, {"sjunde", "sju"}, {"åttonde", "åtta"}, {"åtton", "åtta"}, {"nionde", "nio"}, {"tionde", "tio"},
                             // multiples / scale ordinals -> map back to cardinal scale form
                             {"hundrade", "hundra"}, {"tusende", "tusen"}, {"miljonte", "miljon"}
                         };
@@ -674,9 +617,10 @@ namespace Tools.Munch
                         int total = 0;
                         int current = 0;
 
+                        bool matched = false;
                         while (idx < s.Length)
                         {
-                            bool matched = false;
+                            matched = false;
 
                             // scales
                             if (s.Substring(idx).StartsWith("miljarder")) { if (current==0) current=1; total += current * 1000000000; current = 0; idx += "miljarder".Length; matched = true; continue; }
