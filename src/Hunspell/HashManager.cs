@@ -291,6 +291,84 @@ internal sealed class HashManager : IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Determine whether the dictionary contains a surface form that matches
+    /// the supplied word with identical casing. This is used by KEEPCASE logic
+    /// to distinguish the original entry from auto-capitalized variants.
+    /// </summary>
+    public bool HasExactCaseEntry(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_words.TryGetValue(word, out var entries))
+        {
+            if (entries.Any(e => string.Equals(e.Word, word, StringComparison.Ordinal)))
+            {
+                return true;
+            }
+        }
+
+        return _runtimeWords.Contains(word);
+    }
+
+    /// <summary>
+    /// Return true when every dictionary entry for the supplied surface form
+    /// is written using only uppercase letters (ignoring non-letter characters)
+    /// and no lowercase/mixed-case variants exist. Used to enforce the default
+    /// Hunspell rule where all-uppercase entries accept only uppercase input.
+    /// </summary>
+    public bool IsUppercaseOnlyEntry(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_words.TryGetValue(word, out var entries))
+        {
+            return false;
+        }
+
+        bool hasUpper = false;
+        bool hasOther = false;
+
+        foreach (var entry in entries)
+        {
+            var surface = entry.Word ?? string.Empty;
+            bool seenLetter = false;
+            bool allUpper = true;
+            foreach (var ch in surface)
+            {
+                if (!char.IsLetter(ch))
+                {
+                    continue;
+                }
+                seenLetter = true;
+                if (!char.IsUpper(ch))
+                {
+                    allUpper = false;
+                    break;
+                }
+            }
+
+            if (!seenLetter)
+            {
+                continue;
+            }
+
+            if (allUpper)
+            {
+                hasUpper = true;
+            }
+            else
+            {
+                hasOther = true;
+            }
+
+            if (hasUpper && hasOther)
+            {
+                return false;
+            }
+        }
+
+        return hasUpper && !hasOther;
+    }
+
     public bool Add(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);

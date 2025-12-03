@@ -157,7 +157,7 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("conditionalprefix")]  // FAILING: Conditional prefix application
     //
     // FLAG types (long/num/utf8):
-    // [InlineData("encoding")]   // FAILING: Non-UTF8 encoding handling
+    [InlineData("encoding")]   // FAILING: Non-UTF8 encoding handling
     [InlineData("flag")]
     [InlineData("flaglong")]
     [InlineData("flagnum")]
@@ -196,10 +196,10 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("right_to_left_mark")]  // FAILING: RTL mark handling
     //
     // OpenTaal (Dutch):
-    [InlineData("opentaal_cpdpat2")]  // re-enable: checkcompoundpattern improvements
+    [InlineData("opentaal_cpdpat2")]
     //
     // SIMPLIFIEDTRIPLE feature:
-    [InlineData("simplifiedtriple")]  // re-enable: simplified triple semantics
+    [InlineData("simplifiedtriple")]
     public void UpstreamGoodWords_RootLevel_ShouldPass(string baseName)
     {
         var aff = D(baseName, ".aff");
@@ -649,8 +649,8 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("onlyincompound2")]  // FAILING: Advanced ONLYINCOMPOUND
     //
     // OpenTaal compound patterns:
-    // [InlineData("opentaal_cpdpat")]    // FAILING: OpenTaal compound pattern
-    // [InlineData("opentaal_keepcase")]  // FAILING: OpenTaal keepcase handling
+    [InlineData("opentaal_cpdpat")]
+    [InlineData("opentaal_keepcase")]
     //
     // SIMPLIFIEDTRIPLE:
     [InlineData("simplifiedtriple")]

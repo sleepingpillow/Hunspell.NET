@@ -131,9 +131,9 @@ The following test categories are not yet fully implemented:
 - ❌ `i68568utf` - Bug tracker issue
 
 #### OpenTaal Advanced
-- ❌ `opentaal_cpdpat` - OpenTaal compound pattern
+- ✅ `opentaal_cpdpat` - OpenTaal compound pattern
 - ❌ `opentaal_cpdpat2` - OpenTaal compound pattern
-- ❌ `opentaal_keepcase` - OpenTaal keepcase handling
+- ✅ `opentaal_keepcase` - OpenTaal keepcase handling
 
 ## Priority Areas for Implementation
 

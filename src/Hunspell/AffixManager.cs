@@ -98,6 +98,82 @@ internal sealed class AffixManager : IDisposable
     // duplication and ensures EvaluateAffixBaseCandidate can reuse it.
     private bool VariantHasFlag(string? variant, string? token) => !string.IsNullOrEmpty(variant) && !string.IsNullOrEmpty(token) && _hashManager.VariantContainsFlagAfterAppend(variant ?? string.Empty, null, token);
 
+    /// <summary>
+    /// Determine whether the given surface form violates KEEPCASE requirements
+    /// for any of the supplied variant flag strings.
+    /// </summary>
+    private bool ViolatesKeepCase(string surface, string dictionaryKey, IEnumerable<string> variantFlags, string? appendedRaw = null)
+    {
+        if (string.IsNullOrEmpty(_keepCaseFlag) || string.IsNullOrEmpty(surface))
+        {
+            // Even when KEEPCASE flag is not configured we still need to enforce
+            // uppercase-only entries. Fall through to the uppercase check below.
+        }
+
+        bool seenLetter = false;
+        bool firstLetterUpper = false;
+        bool restAllLower = true;
+        bool allLettersUpper = true;
+
+        foreach (var ch in surface)
+        {
+            if (!char.IsLetter(ch))
+            {
+                continue;
+            }
+
+            if (!seenLetter)
+            {
+                seenLetter = true;
+                firstLetterUpper = char.IsUpper(ch);
+                allLettersUpper = char.IsUpper(ch);
+                continue;
+            }
+
+            if (!char.IsLower(ch))
+            {
+                restAllLower = false;
+            }
+            allLettersUpper &= char.IsUpper(ch);
+        }
+
+        if (!seenLetter)
+        {
+            return false;
+        }
+
+        bool isAllCaps = allLettersUpper;
+        bool isInitCap = firstLetterUpper && restAllLower;
+
+        bool hasKeepCaseFlag = !string.IsNullOrEmpty(_keepCaseFlag) && variantFlags.Any(variant =>
+            _hashManager.VariantContainsFlagAfterAppend(variant ?? string.Empty, appendedRaw, _keepCaseFlag));
+
+        if (hasKeepCaseFlag)
+        {
+            if (!isAllCaps && !isInitCap)
+            {
+                return false;
+            }
+
+            if (_hashManager.HasExactCaseEntry(surface))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        if (!string.IsNullOrEmpty(dictionaryKey) && _hashManager.IsUppercaseOnlyEntry(dictionaryKey))
+        {
+            if (!isAllCaps)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public string Encoding => _options.TryGetValue("SET", out var encoding) ? encoding : "UTF-8";
 
     /// <summary>
@@ -745,11 +821,24 @@ internal sealed class AffixManager : IDisposable
     /// </summary>
     private (string chars, string? flag) ParseFlaggedPart(string part)
     {
+        if (string.IsNullOrEmpty(part))
+        {
+            return (string.Empty, null);
+        }
+
         var slashIndex = part.IndexOf('/');
+
+        // Handle flag-only tokens like "/Ch" where no literal characters are specified.
+        if (slashIndex == 0 && part.Length > 1)
+        {
+            return (string.Empty, part.Substring(1));
+        }
+
         if (slashIndex > 0)
         {
             return (part.Substring(0, slashIndex), part.Substring(slashIndex + 1));
         }
+
         return (part, null);
     }
 
@@ -2552,6 +2641,12 @@ internal sealed class AffixManager : IDisposable
 
         var variants = _hashManager.GetWordFlagVariants(lookUpPart).ToList();
 
+        var keepCaseSurface = string.Equals(lookUpPart, part, StringComparison.OrdinalIgnoreCase) ? part : lookUpPart;
+        if (variants.Count > 0 && ViolatesKeepCase(keepCaseSurface, lookUpPart, variants))
+        {
+            return false;
+        }
+
         if (!string.IsNullOrEmpty(_forceUCaseFlag) && (wordCount == 0 || endPos == fullWord.Length) &&
             variants.Any(v => !string.IsNullOrEmpty(v) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forceUCaseFlag)))
         {
@@ -2794,6 +2889,12 @@ internal sealed class AffixManager : IDisposable
 
         if (mergedVariants.Count > 0)
         {
+            var dictionaryKey = affixBase ?? surfacePart;
+            if (ViolatesKeepCase(surfacePart, dictionaryKey, mergedVariants, appendedFlag))
+            {
+                return false;
+            }
+
             if (!string.IsNullOrEmpty(_forceUCaseFlag) && mergedVariants.Any(m => !string.IsNullOrEmpty(m) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _forceUCaseFlag)) && (wordCount == 0 || endPos == fullWord.Length))
             {
                 requiresForceUCase = true;
@@ -2961,15 +3062,18 @@ internal sealed class AffixManager : IDisposable
         // the last atomic subpart should be considered.
         if (_compoundPatterns.Count > 0 && previousPart is not null)
         {
+            var prevSurface = previousPart!;
+            var currSurface = currentPart ?? string.Empty;
+
             foreach (var pattern in _compoundPatterns)
             {
                 // Collect candidate end substrings (last atomic components).
                 // Track appended flags (affix-derived candidates) so pattern
                 // matching can correctly test tokens against appended flags.
-                var endCandidates = new List<(string Part, string? Appended)> { (previousPart, null) };
-                for (int cut = Math.Max(0, previousPart.Length - 1); cut >= 0; cut--)
+                var endCandidates = new List<(string Part, string? Appended)> { (prevSurface, null) };
+                for (int cut = Math.Max(0, prevSurface.Length - 1); cut >= 0; cut--)
                 {
-                    var tail = previousPart.Substring(cut);
+                    var tail = prevSurface.Substring(cut);
                     if (tail.Length < _compoundMin) continue;
                     // Accept tail if it appears in dictionary or could be produced
                     // via affix rules (when used in compounds)
@@ -2977,8 +3081,13 @@ internal sealed class AffixManager : IDisposable
                     {
                         if (!endCandidates.Any(e => e.Part == tail)) endCandidates.Add((tail, null));
                     }
-                    else if (TryFindAffixBase(tail, true, out _, out _, out var tailApp))
+                    else if (TryFindAffixBase(tail, true, out var tailBase, out _, out var tailApp))
                     {
+                        if (tailBase is not null && tailBase.Length >= _compoundMin)
+                        {
+                            if (!endCandidates.Any(e => e.Part == tailBase && e.Appended == tailApp)) endCandidates.Add((tailBase, tailApp));
+                        }
+
                         if (!endCandidates.Any(e => e.Part == tail && e.Appended == tailApp)) endCandidates.Add((tail, tailApp));
                     }
                 }
@@ -2991,9 +3100,9 @@ internal sealed class AffixManager : IDisposable
                 // specified 'ob' -> 'z' is in effect.
                 if (!string.IsNullOrEmpty(pattern.Replacement) && !string.Equals(pattern.EndChars, "0", StringComparison.Ordinal))
                 {
-                    if (previousPart.EndsWith(pattern.Replacement, StringComparison.Ordinal))
+                    if (prevSurface.EndsWith(pattern.Replacement, StringComparison.Ordinal))
                     {
-                        var prefixBeforeReplacement = previousPart.Substring(0, previousPart.Length - pattern.Replacement.Length);
+                        var prefixBeforeReplacement = prevSurface.Substring(0, prevSurface.Length - pattern.Replacement.Length);
                         var origEnd = string.Concat(prefixBeforeReplacement, pattern.EndChars);
                         if (origEnd.Length >= _compoundMin)
                         {
@@ -3001,8 +3110,12 @@ internal sealed class AffixManager : IDisposable
                             {
                                 if (!endCandidates.Any(e => e.Part == origEnd)) endCandidates.Add((origEnd, null));
                             }
-                            else if (TryFindAffixBase(origEnd, true, out _, out _, out var origApp2))
+                            else if (TryFindAffixBase(origEnd, true, out var baseFromOrigEnd, out _, out var origApp2))
                             {
+                                if (baseFromOrigEnd is not null && baseFromOrigEnd.Length >= _compoundMin)
+                                {
+                                    if (!endCandidates.Any(e => e.Part == baseFromOrigEnd && e.Appended == origApp2)) endCandidates.Add((baseFromOrigEnd, origApp2));
+                                }
                                 if (!endCandidates.Any(e => e.Part == origEnd && e.Appended == origApp2)) endCandidates.Add((origEnd, origApp2));
                             }
                         }
@@ -3010,17 +3123,22 @@ internal sealed class AffixManager : IDisposable
                 }
 
                 // Collect candidate begin substrings (first atomic components)
-                var beginCandidates = new List<(string Part, string? Appended)> { (currentPart, null) };
-                for (int cut = _compoundMin; cut <= currentPart.Length - _compoundMin; cut++)
+                var beginCandidates = new List<(string Part, string? Appended)> { (currSurface, null) };
+                for (int cut = _compoundMin; cut <= currSurface.Length - _compoundMin; cut++)
                 {
-                    var head = currentPart.Substring(0, cut);
+                    var head = currSurface.Substring(0, cut);
                     if (head.Length < _compoundMin) continue;
                     if (_hashManager.GetWordFlags(head) is not null)
                     {
                         if (!beginCandidates.Any(e => e.Part == head)) beginCandidates.Add((head, null));
                     }
-                    else if (TryFindAffixBase(head, true, out _, out _, out var headApp))
+                    else if (TryFindAffixBase(head, true, out var headBase, out _, out var headApp))
                     {
+                        if (headBase is not null && headBase.Length >= _compoundMin)
+                        {
+                            if (!beginCandidates.Any(e => e.Part == headBase && e.Appended == headApp)) beginCandidates.Add((headBase, headApp));
+                        }
+
                         if (!beginCandidates.Any(e => e.Part == head && e.Appended == headApp)) beginCandidates.Add((head, headApp));
                     }
                 }
@@ -3034,9 +3152,9 @@ internal sealed class AffixManager : IDisposable
                 // add it if it's a valid dictionary or affix-derived base.
                 if (!string.IsNullOrEmpty(pattern.Replacement) && !string.Equals(pattern.BeginChars, "0", StringComparison.Ordinal))
                 {
-                    if (currentPart.StartsWith(pattern.Replacement, StringComparison.Ordinal))
+                    if (currSurface.StartsWith(pattern.Replacement, StringComparison.Ordinal))
                     {
-                        var suffixAfterReplacement = currentPart.Substring(pattern.Replacement.Length);
+                        var suffixAfterReplacement = currSurface.Substring(pattern.Replacement.Length);
                         var origBegin = string.Concat(pattern.BeginChars, suffixAfterReplacement);
                         if (origBegin.Length >= _compoundMin)
                         {
@@ -3044,8 +3162,12 @@ internal sealed class AffixManager : IDisposable
                             {
                                 if (!beginCandidates.Any(e => e.Part == origBegin)) beginCandidates.Add((origBegin, null));
                             }
-                            else if (TryFindAffixBase(origBegin, true, out _, out _, out var origApp))
+                            else if (TryFindAffixBase(origBegin, true, out var baseFromOrigBegin, out _, out var origApp))
                             {
+                                if (baseFromOrigBegin is not null && baseFromOrigBegin.Length >= _compoundMin)
+                                {
+                                    if (!beginCandidates.Any(e => e.Part == baseFromOrigBegin && e.Appended == origApp)) beginCandidates.Add((baseFromOrigBegin, origApp));
+                                }
                                 if (!beginCandidates.Any(e => e.Part == origBegin && e.Appended == origApp)) beginCandidates.Add((origBegin, origApp));
                             }
                         }
