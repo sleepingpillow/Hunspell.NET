@@ -153,9 +153,9 @@ public class FlagCompoundForbidEdgeTests
 
                 // Inspect TryFindAffixBase internals for foobars
                 var tfMethod = af.GetType().GetMethod("TryFindAffixBase", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-                var parameters = new object?[] { "foobars", true, null, null, null, 0 };
+                var parameters = new object?[] { "foobars", true, null, null, null, 0, 0 };
                 var found = (bool)tfMethod!.Invoke(af, parameters)!;
-                Console.WriteLine($"TryFindAffixBase('foobars') => {found} (base='{parameters[2]}', kind='{parameters[3]}', appended='{parameters[4]}')");
+                Console.WriteLine($"TryFindAffixBase('foobars') => {found} (base='{parameters[2]}', kind='{parameters[3]}', appended='{parameters[4]}', count='{parameters[5]}')");
 
                 var checkBreak = (bool)af.GetType().GetMethod("CheckBreak")!.Invoke(af, new object[] { "foobars" })!;
                 Console.WriteLine($"AffixManager.CheckBreak('foobars') => {checkBreak}");

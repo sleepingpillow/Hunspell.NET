@@ -50,6 +50,7 @@ The following upstream test categories are fully passing:
 - ✅ CHECKCOMPOUNDTRIPLE (`checkcompoundtriple`)
 - ✅ CHECKCOMPOUNDREP basic (`checkcompoundrep2`)
 - ✅ CHECKCOMPOUNDPATTERN replacements (`checkcompoundpattern3`, `checkcompoundpattern4`)
+- ✅ Compound typo guard (`limit-multiple-compounding`)
 
 #### Advanced Affix Features
 - ✅ CIRCUMFIX superlatives (`circumfix`)

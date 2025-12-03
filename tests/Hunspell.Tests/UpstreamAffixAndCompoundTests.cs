@@ -572,6 +572,7 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("i54633")]
     [InlineData("keepcase")]
     [InlineData("korean")]
+    [InlineData("limit-multiple-compounding")]
     [InlineData("map")]
     [InlineData("maputf")]
     [InlineData("needaffix")]
@@ -634,9 +635,6 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("i58202")]     // FAILING: Bug tracker test
     // [InlineData("i68568")]     // FAILING: Bug tracker test
     // [InlineData("i68568utf")]  // FAILING: Bug tracker test
-    //
-    // Compound limiting:
-    // [InlineData("limit-multiple-compounding")]  // FAILING: Compound limit not enforced
     //
     // NEEDAFFIX advanced:
     // [InlineData("needaffix3")]  // FAILING: Advanced NEEDAFFIX restrictions
