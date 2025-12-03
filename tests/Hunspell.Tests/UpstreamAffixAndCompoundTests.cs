@@ -138,12 +138,12 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("checksharpsutf")] // FAILING: CHECKSHARPS not implemented
     //
     // CHECKCOMPOUNDPATTERN feature:
-    // [InlineData("checkcompoundcase2")]     // FAILING: Advanced compound case handling
+    [InlineData("checkcompoundcase2")]     // FAILING: Advanced compound case handling
     [InlineData("checkcompoundpattern")]
     [InlineData("checkcompoundpattern2")]
-    // [InlineData("checkcompoundpattern3")]  // Requires replacement-aware enforcement (handled in dedicated suite)
-    // [InlineData("checkcompoundpattern4")]  // Requires advanced replacement enforcement (handled in dedicated suite)
-    // [InlineData("checkcompoundrep")]       // FAILING: CHECKCOMPOUNDREP not fully implemented
+    [InlineData("checkcompoundpattern3")]
+    [InlineData("checkcompoundpattern4")]
+    [InlineData("checkcompoundrep")]
     //
     // COMPLEXPREFIXES feature (right-to-left languages):
     // [InlineData("complexprefixes")]    // FAILING: COMPLEXPREFIXES not implemented

@@ -209,18 +209,18 @@ namespace Tools.Munch
             {
                 var w = kvp.Key;
                 var candidates = kvp.Value;
-                
+
                 // For each candidate, check if root exists and respects only-in-compound flags
                 foreach (var cand in candidates)
                 {
                     if (!baseWordSet.Contains(cand.root))
                         continue;
-                    
+
                     // Check if root has only-in-compound flag
                     var rootEntry = wordMap[cand.root];
                     if (!string.IsNullOrEmpty(rootEntry.Flags) && aff.OnlyInCompound.Overlaps(rootEntry.Flags.ToCharArray()))
                         continue; // root is only valid inside compounds, skip
-                    
+
                     // This candidate is valid, mark word removable and record affix
                     keep[w] = false;
                     if (!affMap.TryGetValue(cand.root, out var hs))
