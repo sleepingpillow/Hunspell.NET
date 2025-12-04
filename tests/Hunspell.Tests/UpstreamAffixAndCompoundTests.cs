@@ -189,7 +189,7 @@ public class UpstreamAffixAndCompoundTests
     // NEEDAFFIX advanced cases:
     // [InlineData("needaffix2")]  // FAILING: Advanced NEEDAFFIX handling
     // [InlineData("needaffix4")]  // FAILING: Advanced NEEDAFFIX handling
-    // [InlineData("needaffix5")]  // FAILING: Advanced NEEDAFFIX handling
+    [InlineData("needaffix5")]  // FAILING: Advanced NEEDAFFIX handling
     //
     // Language-specific tests:
     // [InlineData("nepali")]              // FAILING: Nepali language features
@@ -632,13 +632,13 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("hu")]  // FAILING: Hungarian restrictions
     //
     // Bug tracker tests:
-    // [InlineData("i58202")]     // FAILING: Bug tracker test
+    [InlineData("i58202")]     // FAILING: Bug tracker test
     // [InlineData("i68568")]     // FAILING: Bug tracker test
     // [InlineData("i68568utf")]  // FAILING: Bug tracker test
     //
     // NEEDAFFIX advanced:
     // [InlineData("needaffix3")]  // FAILING: Advanced NEEDAFFIX restrictions
-    // [InlineData("needaffix5")]  // FAILING: Advanced NEEDAFFIX restrictions
+    [InlineData("needaffix5")]  // FAILING: Advanced NEEDAFFIX restrictions
     //
     // N-gram UTF-8:
     // [InlineData("ngram_utf_fix")]  // FAILING: N-gram UTF-8 handling
