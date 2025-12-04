@@ -276,12 +276,29 @@ internal sealed class HashManager : IDisposable
         }
 
         // Otherwise, apply a refined case-handling rule set:
-        // - If the dictionary has a lower-case variant, allow case-insensitive matches.
+        // - If the dictionary has a lower-case variant, allow NORMAL capitalization
+        //   (all-lower, initial-capital, or all-upper) but reject weird mixed case.
         // - If the dictionary has an all-upper variant (acronym), accept only ALL-UPPER words.
         // - If the dictionary has mixed-case variants (e.g., OpenOffice.org), accept
         //   only exact-case or the ALL-UPPER variant (OpenOffice.org -> OPENOFFICE.ORG).
         bool hasAllLower = entries.Any(e => e.Word == e.Word.ToLowerInvariant());
-        if (hasAllLower) return true;
+        if (hasAllLower)
+        {
+            // Accept normal capitalization patterns: lowercase, initial-cap, or all-caps
+            // Reject weird mixed-case like "fOO" or "BAr"
+            bool isLowercase = string.Equals(word, word.ToLowerInvariant(), StringComparison.Ordinal);
+            bool isAllUpper = string.Equals(word, word.ToUpperInvariant(), StringComparison.Ordinal);
+            bool isInitialCap = word.Length > 0 &&
+                                char.IsUpper(word[0]) &&
+                                string.Equals(word.Substring(1), word.Substring(1).ToLowerInvariant(), StringComparison.Ordinal);
+
+            if (isLowercase || isAllUpper || isInitialCap)
+            {
+                return true;
+            }
+            // Otherwise it's weird mixed case, reject it
+            return false;
+        }
 
         bool hasAllUpper = entries.Any(e => e.Word == e.Word.ToUpperInvariant());
         bool hasMixed = entries.Any(e => !(e.Word == e.Word.ToUpperInvariant() || e.Word == e.Word.ToLowerInvariant()));

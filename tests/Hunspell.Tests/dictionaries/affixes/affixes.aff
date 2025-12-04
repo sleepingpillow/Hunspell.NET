@@ -1,6 +1,7 @@
-PFX R Y 1
-PFX R 0 re .
+# simple example for affix compression (see Hunspell(4))
+PFX A Y 1
+PFX A 0 re .
 
-SFX D Y 2
-SFX D 0 e d
-SFX D y ied [^aeiou]y
+SFX B Y 2
+SFX B 0 ed [^y]
+SFX B y ied y

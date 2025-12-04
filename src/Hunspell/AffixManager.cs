@@ -4173,19 +4173,17 @@ internal sealed class AffixManager : IDisposable
                     baseCandidate2 = base2 + sfx.Stripping;
                 }
 
-                if (!string.IsNullOrEmpty(sfx.Condition) && sfx.Condition != ".")
-                {
-                    try
+                    if (!string.IsNullOrEmpty(sfx.Condition) && sfx.Condition != ".")
                     {
-                        if (!Regex.IsMatch(baseCandidate2, sfx.Condition + "$", RegexOptions.CultureInvariant)) continue;
-                    }
-                    catch (ArgumentException)
-                    {
-                        continue;
-                    }
-                }
-
-                if (!_hashManager.HasPhTarget(baseCandidate2) && _hashManager.Lookup(baseCandidate2))
+                        try
+                        {
+                            if (!Regex.IsMatch(baseCandidate2, sfx.Condition + "$", RegexOptions.CultureInvariant)) continue;
+                        }
+                        catch (ArgumentException)
+                        {
+                            continue;
+                        }
+                    }                if (!_hashManager.HasPhTarget(baseCandidate2) && _hashManager.Lookup(baseCandidate2))
                 {
                     var baseVariants = _hashManager.GetWordFlagVariants(baseCandidate2).ToList();
                     if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
