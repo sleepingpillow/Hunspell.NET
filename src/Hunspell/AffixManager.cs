@@ -3515,12 +3515,15 @@ internal sealed class AffixManager : IDisposable
             return false;
         }
 
+        // For homonym entries (same word with different flags), the word should
+        // only be rejected if ALL variants have the ONLYINCOMPOUND flag. If at
+        // least one variant doesn't have it, the word is valid standalone.
         // Use per-entry flag variants to correctly detect multi-character flags
         // (e.g. 'cc'). GetWordFlags() returns deduplicated characters which can
         // hide repeated characters and lead to incorrect matches.
         var variants = _hashManager.GetWordFlagVariants(word).ToList();
         if (variants.Count == 0) return false;
-        return variants.Any(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound));
+        return variants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound));
     }
 
     /// <summary>

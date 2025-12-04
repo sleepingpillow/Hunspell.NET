@@ -129,7 +129,7 @@ public class UpstreamAffixAndCompoundTests
     // FAILING TESTS - Commented out (features not yet implemented):
     //
     // Bug tracker tests requiring specific fixes:
-    // [InlineData("1592880")]        // FAILING: Bug tracker test
+    [InlineData("1592880")]        // re-enable: homonym handling test
     // [InlineData("1975530")]        // FAILING: Bug tracker test
     // [InlineData("2999225")]        // FAILING: Bug tracker test
     //

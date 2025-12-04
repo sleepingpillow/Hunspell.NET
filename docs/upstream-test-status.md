@@ -6,14 +6,14 @@ This document tracks the status of Hunspell.NET's compatibility with the upstrea
 
 | Category | Active | Commented | Total | Pass Rate |
 |----------|--------|-----------|-------|-----------|
-| GoodWords (Root Level) | 73 | 41 | 114 | 64% |
+| GoodWords (Root Level) | 74 | 40 | 114 | 65% |
 | GoodWords (Nested) | 20 | 0 | 20 | 100% |
 | WrongWords (Root Level) | 76 | 21 | 97 | 78% |
 | WrongWords (Nested) | 20 | 0 | 20 | 100% |
 | Suggestions | 6 | 0 | 6 | 100% |
-| **Total** | **195** | **62** | **257** | **76%** |
+| **Total** | **196** | **61** | **257** | **76%** |
 
-*All 195 active tests are passing. The 62 commented-out tests represent features not yet implemented.*
+*All 196 active tests are passing. The 61 commented-out tests represent features not yet implemented.*
 
 ## Test Categories
 
@@ -31,6 +31,7 @@ The following upstream test categories are fully passing:
 - ✅ Forbidden words (`forbiddenword`, `nosuggest`)
 - ✅ NEEDAFFIX basic (`needaffix`)
 - ✅ ONLYINCOMPOUND (`onlyincompound`)
+- ✅ ONLYINCOMPOUND with homonyms (`1592880`)
 - ✅ Force uppercase (`forceucase`)
 - ✅ UTF-8 support (`utf8`, `utf8_bom`, `utf8_bom2`, `utf8_nonbmp`)
 - ✅ Ignore characters (`ignore`, `ignoreutf`)
@@ -119,7 +120,7 @@ The following test categories are not yet fully implemented:
 - ❌ `right_to_left_mark` - RTL mark handling
 
 #### Bug Tracker Tests
-- ❌ `1592880` - Specific bug fix
+- ✅ `1592880` - Homonym handling with ONLYINCOMPOUND flag
 - ❌ `1706659` - Specific bug fix
 - ❌ `1975530` - Specific bug fix
 - ❌ `2970242` - Specific bug fix
@@ -194,5 +195,6 @@ When implementing a new feature:
 
 ## Last Updated
 
+2025-12-04 - Added 1592880 (homonym handling with ONLYINCOMPOUND)
 2025-12-04 - Added compoundaffix3 WrongWords coverage and updated counts
 2024-11-29 - Initial upstream test evaluation
