@@ -8,12 +8,12 @@ This document tracks the status of Hunspell.NET's compatibility with the upstrea
 |----------|--------|-----------|-------|-----------|
 | GoodWords (Root Level) | 73 | 41 | 114 | 64% |
 | GoodWords (Nested) | 20 | 0 | 20 | 100% |
-| WrongWords (Root Level) | 75 | 22 | 97 | 77% |
+| WrongWords (Root Level) | 76 | 21 | 97 | 78% |
 | WrongWords (Nested) | 20 | 0 | 20 | 100% |
 | Suggestions | 6 | 0 | 6 | 100% |
-| **Total** | **194** | **63** | **257** | **75%** |
+| **Total** | **195** | **62** | **257** | **76%** |
 
-*All 193 active tests are passing. The 64 commented-out tests represent features not yet implemented.*
+*All 195 active tests are passing. The 62 commented-out tests represent features not yet implemented.*
 
 ## Test Categories
 
@@ -25,7 +25,7 @@ The following upstream test categories are fully passing:
 - ✅ Basic spell checking (`base`, `base_utf`)
 - ✅ Affix handling (`alias`, `alias2`, `fullstrip`, `zeroaffix`)
 - ✅ Case handling (`allcaps`, `allcaps2`, `allcaps3`, `allcaps_utf`, `keepcase`)
-- ✅ Compound words (`compoundflag`, `compoundforbid`, `compoundaffix`, `compoundaffix2`)
+- ✅ Compound words (`compoundflag`, `compoundforbid`, `compoundaffix`, `compoundaffix2`, `compoundaffix3`)
 - ✅ COMPOUNDRULE (`compoundrule` through `compoundrule8`)
 - ✅ Break patterns (`break`, `breakdefault`, `breakoff`)
 - ✅ Forbidden words (`forbiddenword`, `nosuggest`)
@@ -194,4 +194,5 @@ When implementing a new feature:
 
 ## Last Updated
 
+2025-12-04 - Added compoundaffix3 WrongWords coverage and updated counts
 2024-11-29 - Initial upstream test evaluation

@@ -68,7 +68,17 @@ internal sealed class HashManager : IDisposable
                 // try common normalizations (e.g., ISO8859-15 -> ISO-8859-15)
                 try
                 {
-                    var norm = encodingHint.Replace("ISO", "ISO-").Replace('_', '-');
+                    var norm = encodingHint;
+                    // Handle ISO8859-15 -> ISO-8859-15 (insert hyphen after ISO and before digits)
+                    // Check if it starts with ISO followed by a digit (no hyphen between ISO and digit)
+                    if (norm.Length > 3 &&
+                        norm.StartsWith("ISO", StringComparison.OrdinalIgnoreCase) &&
+                        char.IsDigit(norm[3]))
+                    {
+                        // Insert hyphen between ISO and the following digits
+                        norm = "ISO-" + norm.Substring(3);
+                    }
+                    norm = norm.Replace('_', '-');
                     var e = System.Text.Encoding.GetEncoding(norm);
                     triedEncodings.Insert(0, e);
                 }
