@@ -18,38 +18,40 @@ namespace Hunspell.Tests
             var hm = hmField?.GetValue(sp);
             Assert.NotNull(hm);
             var lookup = hm!.GetType().GetMethod("Lookup");
-            Console.WriteLine("Lookup(glass) => " + lookup!.Invoke(hm, new object[] { "glass" }));
-            Console.WriteLine("Lookup(sko) => " + lookup!.Invoke(hm, new object[] { "sko" }));
+            Console.WriteLine("Lookup(glass) => " + lookup!.Invoke(hm, new object?[] { "glass" }));
+            Console.WriteLine("Lookup(sko) => " + lookup!.Invoke(hm, new object?[] { "sko" }));
 
             var afField = typeof(HunspellSpellChecker).GetField("_affixManager", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
             var af = afField?.GetValue(sp);
             Assert.NotNull(af);
 
             var isValid = af!.GetType().GetMethod("IsValidCompoundPart", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            var leftValid = (bool)isValid!.Invoke(af, new object[] { "glass", 0, 0, 5, "glassko", false })!;
-            var rightValid = (bool)isValid!.Invoke(af, new object[] { "sko", 1, 5, 8, "glassko", false })!;
+            var leftValid = (bool)isValid!.Invoke(af, new object?[] { "glass", 0, 0, 5, "glassko", false })!;
+            var rightValid = (bool)isValid!.Invoke(af, new object?[] { "sko", 1, 5, 8, "glassko", false })!;
             Console.WriteLine($"IsValidCompoundPart('glass') => {leftValid}");
             Console.WriteLine($"IsValidCompoundPart('sko') => {rightValid}");
 
             var ruleMethod = af.GetType().GetMethod("CheckCompoundRules", System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            var rulesOk = (bool)ruleMethod!.Invoke(af, new object[] { "glassko", 5, 8, "glass", "sko" })!;
+            var rulesOk = (bool)ruleMethod!.Invoke(af, new object?[] { "glassko", 5, 8, "glass", "sko" })!;
             Console.WriteLine($"CheckCompoundRules('glassko', prevEnd=5) => {rulesOk}");
 
             var compOfTwo = af.GetType().GetMethod("IsCompoundMadeOfTwoWords", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            var glassIsComp = (bool)compOfTwo!.Invoke(af, new object[] { "glass", null, null })!;
-            var skoIsComp = (bool)compOfTwo!.Invoke(af, new object[] { "sko", null, null })!;
+            var glassCompArgs = new object?[] { "glass", false, false };
+            var glassIsComp = (bool)compOfTwo!.Invoke(af, glassCompArgs)!;
+            var skoCompArgs = new object?[] { "sko", false, false };
+            var skoIsComp = (bool)compOfTwo.Invoke(af, skoCompArgs)!;
             Console.WriteLine($"IsCompoundMadeOfTwoWords('glass') => {glassIsComp}");
             Console.WriteLine($"IsCompoundMadeOfTwoWords('sko') => {skoIsComp}");
 
             var rec = af.GetType().GetMethod("CheckCompoundRecursive", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            var recResult = (bool)rec!.Invoke(af, new object?[] { "glassko", 0, 0, null, 0, false })!;
+            var recResult = (bool)rec!.Invoke(af, new object?[] { "glassko", 0, 0, (string?)null, 0, false })!;
             Console.WriteLine($"CheckCompoundRecursive('glassko') => {recResult}");
             var recAfterFirst = (bool)rec!.Invoke(af, new object?[] { "glassko", 1, 5, "glass", 0, false })!;
             Console.WriteLine($"CheckCompoundRecursive('glassko' after first part) => {recAfterFirst}");
             var recAfterFirstWithSyll = (bool)rec!.Invoke(af, new object?[] { "glassko", 1, 5, "glass", 1, false })!;
             Console.WriteLine($"CheckCompoundRecursive('glassko' after first part, syll=1) => {recAfterFirstWithSyll}");
-            var baseCaseTrue = (bool)rec!.Invoke(af, new object?[] { "glassko", 2, 8, null, 0, false })!;
-            var baseCaseFalse = (bool)rec!.Invoke(af, new object?[] { "glassko", 1, 8, null, 0, false })!;
+            var baseCaseTrue = (bool)rec!.Invoke(af, new object?[] { "glassko", 2, 8, (string?)null, 0, false })!;
+            var baseCaseFalse = (bool)rec!.Invoke(af, new object?[] { "glassko", 1, 8, (string?)null, 0, false })!;
             Console.WriteLine($"CheckCompoundRecursive('glassko' wordCount=2,pos=8) => {baseCaseTrue}");
             Console.WriteLine($"CheckCompoundRecursive('glassko' wordCount=1,pos=8) => {baseCaseFalse}");
 
@@ -68,7 +70,7 @@ namespace Hunspell.Tests
                     var argsA = new object?[] { part, wc, pos, i, "glassko", false };
                     var okPart = (bool)isValid!.Invoke(af, argsA)!;
                     if (!okPart) continue;
-                    var okRule = (bool)ruleMethod!.Invoke(af, new object[] { "glassko", pos, i, prev, part })!;
+                    var okRule = (bool)ruleMethod!.Invoke(af, new object?[] { "glassko", pos, i, prev, part })!;
                     if (!okRule) continue;
                     Dfs(i, wc + 1, part);
                     if (found) return;

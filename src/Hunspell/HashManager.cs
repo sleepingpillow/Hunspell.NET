@@ -29,6 +29,7 @@ internal sealed class HashManager : IDisposable
     // Flag representation format for dictionary entries. Default is single-character flags.
     private enum FlagFormat { Single, Long, Num, Utf8 }
     private FlagFormat _flagFormat = FlagFormat.Single;
+    private List<string> _flagAliases = new() { string.Empty };
 
     public HashManager(string dictionaryPath, string? encodingHint = null)
     {
@@ -467,7 +468,7 @@ internal sealed class HashManager : IDisposable
             var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var e in entries)
             {
-                var f = e.Flags ?? string.Empty;
+                var f = ExpandAliasFlags(e.Flags);
                 if (string.IsNullOrEmpty(f)) continue;
                 switch (_flagFormat)
                 {
@@ -529,7 +530,7 @@ internal sealed class HashManager : IDisposable
             var source = exact.Count > 0 ? exact : entries;
             foreach (var e in source)
             {
-                yield return e.Flags ?? string.Empty;
+                yield return ExpandAliasFlags(e.Flags);
             }
             yield break;
         }
@@ -557,6 +558,21 @@ internal sealed class HashManager : IDisposable
         else _flagFormat = FlagFormat.Single;
     }
 
+    public void SetFlagAliases(IReadOnlyList<string> aliases)
+    {
+        if (aliases is null || aliases.Count == 0)
+        {
+            _flagAliases = new List<string> { string.Empty };
+            return;
+        }
+
+        _flagAliases = new List<string>(aliases);
+        if (_flagAliases.Count == 0)
+        {
+            _flagAliases.Add(string.Empty);
+        }
+    }
+
     public void Dispose()
     {
         if (!_disposed)
@@ -568,6 +584,50 @@ internal sealed class HashManager : IDisposable
     }
 
     private record WordEntry(string Word, string Flags);
+
+    private string ExpandAliasFlags(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw) || _flagAliases.Count <= 1)
+        {
+            return raw ?? string.Empty;
+        }
+
+        var trimmed = raw.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return string.Empty;
+        }
+
+        if (!trimmed.Contains(','))
+        {
+            if (int.TryParse(trimmed, out var idx) && idx > 0 && idx < _flagAliases.Count)
+            {
+                return _flagAliases[idx];
+            }
+            return trimmed;
+        }
+
+        var tokens = trimmed.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (tokens.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var expanded = new List<string>(tokens.Length);
+        foreach (var token in tokens)
+        {
+            if (int.TryParse(token, out var idx) && idx > 0 && idx < _flagAliases.Count)
+            {
+                expanded.Add(_flagAliases[idx]);
+            }
+            else
+            {
+                expanded.Add(token);
+            }
+        }
+
+        return string.Join(',', expanded);
+    }
 
     /// <summary>
     /// Merge a serialized flags string (as returned by GetWordFlags) with an appended
@@ -614,8 +674,8 @@ internal sealed class HashManager : IDisposable
             }
         }
 
-        addTokensFromSerialized(baseFlagsSerialized ?? string.Empty);
-        if (!string.IsNullOrEmpty(appendedFlagsRaw)) addTokensFromRawAppended(appendedFlagsRaw);
+        addTokensFromSerialized(ExpandAliasFlags(baseFlagsSerialized));
+        if (!string.IsNullOrEmpty(appendedFlagsRaw)) addTokensFromRawAppended(ExpandAliasFlags(appendedFlagsRaw));
 
         if (tokens.Count == 0) return string.Empty;
         if (_flagFormat == FlagFormat.Long || _flagFormat == FlagFormat.Num)
@@ -635,54 +695,57 @@ internal sealed class HashManager : IDisposable
     {
         if (string.IsNullOrEmpty(flagToCheck)) return false;
 
+        var expandedVariant = ExpandAliasFlags(variantRaw);
+        var expandedAppended = ExpandAliasFlags(appendedRaw);
+
         // Tokenize variantRaw according to current flag format
         var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!string.IsNullOrEmpty(variantRaw))
+        if (!string.IsNullOrEmpty(expandedVariant))
         {
             if (_flagFormat == FlagFormat.Long)
             {
                 // Some variants may already be comma-separated; split if so.
-                if (variantRaw.Contains(','))
+                if (expandedVariant.Contains(','))
                 {
-                    foreach (var p in variantRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) tokens.Add(p);
+                    foreach (var p in expandedVariant.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) tokens.Add(p);
                 }
                 else
                 {
-                    for (int i = 0; i < variantRaw.Length; i += 2)
+                    for (int i = 0; i < expandedVariant.Length; i += 2)
                     {
-                        var len = Math.Min(2, variantRaw.Length - i);
-                        tokens.Add(variantRaw.Substring(i, len));
+                        var len = Math.Min(2, expandedVariant.Length - i);
+                        tokens.Add(expandedVariant.Substring(i, len));
                     }
                 }
             }
             else if (_flagFormat == FlagFormat.Num)
             {
-                foreach (var p in variantRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) tokens.Add(p);
+                foreach (var p in expandedVariant.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) tokens.Add(p);
             }
             else
             {
-                foreach (var ch in variantRaw) tokens.Add(ch.ToString());
+                foreach (var ch in expandedVariant) tokens.Add(ch.ToString());
             }
         }
 
         // parse appended flags
-        if (!string.IsNullOrEmpty(appendedRaw))
+        if (!string.IsNullOrEmpty(expandedAppended))
         {
             if (_flagFormat == FlagFormat.Long)
             {
-                for (int i = 0; i < appendedRaw.Length; i += 2)
+                for (int i = 0; i < expandedAppended.Length; i += 2)
                 {
-                    var len = Math.Min(2, appendedRaw.Length - i);
-                    tokens.Add(appendedRaw.Substring(i, len));
+                    var len = Math.Min(2, expandedAppended.Length - i);
+                    tokens.Add(expandedAppended.Substring(i, len));
                 }
             }
             else if (_flagFormat == FlagFormat.Num)
             {
-                foreach (var p in appendedRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) tokens.Add(p);
+                foreach (var p in expandedAppended.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)) tokens.Add(p);
             }
             else
             {
-                foreach (var ch in appendedRaw) tokens.Add(ch.ToString());
+                foreach (var ch in expandedAppended) tokens.Add(ch.ToString());
             }
         }
 

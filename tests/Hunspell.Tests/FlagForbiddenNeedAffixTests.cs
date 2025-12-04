@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using Xunit;
 
 namespace Hunspell.Tests;
@@ -27,38 +28,54 @@ public class FlagForbiddenNeedAffixTests
         string aff;
         string dic;
 
+        var suffixFlag = GetSuffixFlag(flagType);
+        var forbiddenFlag = flagType switch { "long" => "BB", "num" => "42", _ => "Ü" };
+        var nonForbiddenFlag = flagType switch { "long" => "AA", "num" => "7", _ => "A" };
+
         if (flagType == "long")
         {
             aff = string.Join("\n", new[] {
                 "FLAG long",
-                "FORBIDDENWORD BB",
-                "SFX S Y 1",
-                "SFX S 0 s/BB ."
+                $"FORBIDDENWORD {forbiddenFlag}",
+                $"SFX {suffixFlag} Y 1",
+                $"SFX {suffixFlag} 0 s/{forbiddenFlag} ."
             }) + "\n";
 
-            dic = string.Join("\n", new[] { "2", "bar", "bar/AA" }) + "\n";
+            dic = string.Join("\n", new[] {
+                "2",
+                $"bar/{FormatFlags(flagType, suffixFlag)}",
+                $"bar/{FormatFlags(flagType, suffixFlag, nonForbiddenFlag)}"
+            }) + "\n";
         }
         else if (flagType == "num")
         {
             aff = string.Join("\n", new[] {
                 "FLAG num",
-                "FORBIDDENWORD 42",
-                "SFX S Y 1",
-                "SFX S 0 s/42 ."
+                $"FORBIDDENWORD {forbiddenFlag}",
+                $"SFX {suffixFlag} Y 1",
+                $"SFX {suffixFlag} 0 s/{forbiddenFlag} ."
             }) + "\n";
 
-            dic = string.Join("\n", new[] { "2", "bar", "bar/7" }) + "\n";
+            dic = string.Join("\n", new[] {
+                "2",
+                $"bar/{FormatFlags(flagType, suffixFlag)}",
+                $"bar/{FormatFlags(flagType, suffixFlag, nonForbiddenFlag)}"
+            }) + "\n";
         }
         else // utf8
         {
             aff = string.Join("\n", new[] {
                 "FLAG UTF-8",
-                "FORBIDDENWORD Ü",
-                "SFX S Y 1",
-                "SFX S 0 s/Ü ."
+                $"FORBIDDENWORD {forbiddenFlag}",
+                $"SFX {suffixFlag} Y 1",
+                $"SFX {suffixFlag} 0 s/{forbiddenFlag} ."
             }) + "\n";
 
-            dic = string.Join("\n", new[] { "2", "bar", "bar/A" }) + "\n";
+            dic = string.Join("\n", new[] {
+                "2",
+                $"bar/{FormatFlags(flagType, suffixFlag)}",
+                $"bar/{FormatFlags(flagType, suffixFlag, nonForbiddenFlag)}"
+            }) + "\n";
         }
 
         var (affPath, dicPath) = WriteTempFiles(aff, dic);
@@ -92,38 +109,41 @@ public class FlagForbiddenNeedAffixTests
         string aff;
         string dic;
 
+        var suffixFlag = GetSuffixFlag(flagType);
+        var needAffixFlag = flagType switch { "long" => "NN", "num" => "7", _ => "Ü" };
+
         if (flagType == "long")
         {
             aff = string.Join("\n", new[] {
                 "FLAG long",
-                "NEEDAFFIX NN",
-                "SFX S Y 1",
-                "SFX S 0 s/ ."
+                $"NEEDAFFIX {needAffixFlag}",
+                $"SFX {suffixFlag} Y 1",
+                $"SFX {suffixFlag} 0 s/ ."
             }) + "\n";
 
-            dic = string.Join("\n", new[] { "1", "foo/NN" }) + "\n";
+            dic = string.Join("\n", new[] { "1", $"foo/{FormatFlags(flagType, suffixFlag, needAffixFlag)}" }) + "\n";
         }
         else if (flagType == "num")
         {
             aff = string.Join("\n", new[] {
                 "FLAG num",
-                "NEEDAFFIX 7",
-                "SFX S Y 1",
-                "SFX S 0 s/ ."
+                $"NEEDAFFIX {needAffixFlag}",
+                $"SFX {suffixFlag} Y 1",
+                $"SFX {suffixFlag} 0 s/ ."
             }) + "\n";
 
-            dic = string.Join("\n", new[] { "1", "foo/7" }) + "\n";
+            dic = string.Join("\n", new[] { "1", $"foo/{FormatFlags(flagType, suffixFlag, needAffixFlag)}" }) + "\n";
         }
         else // utf8
         {
             aff = string.Join("\n", new[] {
                 "FLAG UTF-8",
-                "NEEDAFFIX Ü",
-                "SFX S Y 1",
-                "SFX S 0 s/ ."
+                $"NEEDAFFIX {needAffixFlag}",
+                $"SFX {suffixFlag} Y 1",
+                $"SFX {suffixFlag} 0 s/ ."
             }) + "\n";
 
-            dic = string.Join("\n", new[] { "1", "foo/Ü" }) + "\n";
+            dic = string.Join("\n", new[] { "1", $"foo/{FormatFlags(flagType, suffixFlag, needAffixFlag)}" }) + "\n";
         }
 
         var (affPath, dicPath) = WriteTempFiles(aff, dic);
@@ -154,39 +174,55 @@ public class FlagForbiddenNeedAffixTests
         string aff;
         string dic;
 
+        var suffixFlag = GetSuffixFlag(flagType);
+        var forbiddenFlag = flagType switch { "long" => "BB", "num" => "42", _ => "Ü" };
+        var alternateFlag = flagType switch { "long" => "AA", "num" => "7", _ => "Å" };
+
         if (flagType == "long")
         {
             aff = string.Join("\n", new[] {
                 "FLAG long",
-                "FORBIDDENWORD BB",
-                "SFX S Y 1",
-                "SFX S 0 s/AA ." // append AA to derived
+                $"FORBIDDENWORD {forbiddenFlag}",
+                $"SFX {suffixFlag} Y 1",
+                $"SFX {suffixFlag} 0 s/{alternateFlag} ." // append AA to derived
             }) + "\n";
 
             // two variants for 'bar': one has BB (forbidden) and one has AA
-            dic = string.Join("\n", new[] { "2", "bar/BB", "bar/AA" }) + "\n";
+            dic = string.Join("\n", new[] {
+                "2",
+                $"bar/{FormatFlags(flagType, suffixFlag, forbiddenFlag)}",
+                $"bar/{FormatFlags(flagType, suffixFlag, alternateFlag)}"
+            }) + "\n";
         }
         else if (flagType == "num")
         {
             aff = string.Join("\n", new[] {
                 "FLAG num",
-                "FORBIDDENWORD 42",
-                "SFX S Y 1",
-                "SFX S 0 s/7 ."
+                $"FORBIDDENWORD {forbiddenFlag}",
+                $"SFX {suffixFlag} Y 1",
+                $"SFX {suffixFlag} 0 s/{alternateFlag} ."
             }) + "\n";
 
-            dic = string.Join("\n", new[] { "2", "bar/42", "bar/7" }) + "\n";
+            dic = string.Join("\n", new[] {
+                "2",
+                $"bar/{FormatFlags(flagType, suffixFlag, forbiddenFlag)}",
+                $"bar/{FormatFlags(flagType, suffixFlag, alternateFlag)}"
+            }) + "\n";
         }
         else // utf8
         {
             aff = string.Join("\n", new[] {
                 "FLAG UTF-8",
-                "FORBIDDENWORD Ü",
-                "SFX S Y 1",
-                "SFX S 0 s/Å ."
+                $"FORBIDDENWORD {forbiddenFlag}",
+                $"SFX {suffixFlag} Y 1",
+                $"SFX {suffixFlag} 0 s/{alternateFlag} ."
             }) + "\n";
 
-            dic = string.Join("\n", new[] { "2", "bar/Ü", "bar/Å" }) + "\n";
+            dic = string.Join("\n", new[] {
+                "2",
+                $"bar/{FormatFlags(flagType, suffixFlag, forbiddenFlag)}",
+                $"bar/{FormatFlags(flagType, suffixFlag, alternateFlag)}"
+            }) + "\n";
         }
 
         var (affPath, dicPath) = WriteTempFiles(aff, dic);
@@ -216,39 +252,54 @@ public class FlagForbiddenNeedAffixTests
         string aff;
         string dic;
 
+        var suffixFlag = GetSuffixFlag(flagType);
+        var needAffixFlag = flagType switch { "long" => "NN", "num" => "7", _ => "Ü" };
+
         if (flagType == "long")
         {
             aff = string.Join("\n", new[] {
                 "FLAG long",
-                "NEEDAFFIX NN",
-                "SFX S Y 1",
-                "SFX S 0 s/ ."
+                $"NEEDAFFIX {needAffixFlag}",
+                $"SFX {suffixFlag} Y 1",
+                $"SFX {suffixFlag} 0 s/ ."
             }) + "\n";
 
             // Two variants: one requires affix (NN), one doesn't.
-            dic = string.Join("\n", new[] { "2", "foo/NN", "foo" }) + "\n";
+            dic = string.Join("\n", new[] {
+                "2",
+                $"foo/{FormatFlags(flagType, suffixFlag, needAffixFlag)}",
+                $"foo/{FormatFlags(flagType, suffixFlag)}"
+            }) + "\n";
         }
         else if (flagType == "num")
         {
             aff = string.Join("\n", new[] {
                 "FLAG num",
-                "NEEDAFFIX 7",
-                "SFX S Y 1",
-                "SFX S 0 s/ ."
+                $"NEEDAFFIX {needAffixFlag}",
+                $"SFX {suffixFlag} Y 1",
+                $"SFX {suffixFlag} 0 s/ ."
             }) + "\n";
 
-            dic = string.Join("\n", new[] { "2", "foo/7", "foo" }) + "\n";
+            dic = string.Join("\n", new[] {
+                "2",
+                $"foo/{FormatFlags(flagType, suffixFlag, needAffixFlag)}",
+                $"foo/{FormatFlags(flagType, suffixFlag)}"
+            }) + "\n";
         }
         else // utf8
         {
             aff = string.Join("\n", new[] {
                 "FLAG UTF-8",
-                "NEEDAFFIX Ü",
-                "SFX S Y 1",
-                "SFX S 0 s/ ."
+                $"NEEDAFFIX {needAffixFlag}",
+                $"SFX {suffixFlag} Y 1",
+                $"SFX {suffixFlag} 0 s/ ."
             }) + "\n";
 
-            dic = string.Join("\n", new[] { "2", "foo/Ü", "foo" }) + "\n";
+            dic = string.Join("\n", new[] {
+                "2",
+                $"foo/{FormatFlags(flagType, suffixFlag, needAffixFlag)}",
+                $"foo/{FormatFlags(flagType, suffixFlag)}"
+            }) + "\n";
         }
 
         var (affPath, dicPath) = WriteTempFiles(aff, dic);
@@ -273,15 +324,17 @@ public class FlagForbiddenNeedAffixTests
     public void NeedAffix_CombinedAppendedFlags_HandledCorrectly()
     {
         // This test focuses on numerical flags and combined appended tokens like "214,216".
+        const string flagType = "num";
+        var suffixFlag = GetSuffixFlag(flagType);
         string aff = string.Join("\n", new[] {
             "FLAG num",
             "NEEDAFFIX 214",
-            "SFX S Y 1",
-            "SFX S 0 s/214,216 ." // appends two numeric tokens
+            $"SFX {suffixFlag} Y 1",
+            $"SFX {suffixFlag} 0 s/214,216 ." // appends two numeric tokens
         }) + "\n";
 
         // base 'baz' only has NEEDAFFIX 214
-        string dic = string.Join("\n", new[] { "1", "baz/214" }) + "\n";
+        string dic = string.Join("\n", new[] { "1", $"baz/{FormatFlags(flagType, suffixFlag, "214")}" }) + "\n";
 
         var (affPath, dicPath) = WriteTempFiles(aff, dic);
         try
@@ -299,5 +352,23 @@ public class FlagForbiddenNeedAffixTests
             try { File.Delete(dicPath); } catch { }
             try { Directory.Delete(Path.GetDirectoryName(affPath)!, true); } catch { }
         }
+    }
+
+    private static string GetSuffixFlag(string flagType) => flagType switch
+    {
+        "long" => "SX",
+        "num" => "90",
+        _ => "Š"
+    };
+
+    private static string FormatFlags(string flagType, params string[] tokens)
+    {
+        var filtered = tokens.Where(t => !string.IsNullOrEmpty(t)).ToArray();
+        if (filtered.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        return flagType == "num" ? string.Join(',', filtered) : string.Concat(filtered);
     }
 }

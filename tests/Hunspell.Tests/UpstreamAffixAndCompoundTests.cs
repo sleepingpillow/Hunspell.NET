@@ -146,9 +146,9 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("checkcompoundrep")]
     //
     // COMPLEXPREFIXES feature (right-to-left languages):
-    // [InlineData("complexprefixes")]    // FAILING: COMPLEXPREFIXES not implemented
-    // [InlineData("complexprefixes2")]   // FAILING: COMPLEXPREFIXES not implemented
-    // [InlineData("complexprefixesutf")] // FAILING: COMPLEXPREFIXES not implemented
+    [InlineData("complexprefixes")]
+    [InlineData("complexprefixes2")]
+    [InlineData("complexprefixesutf")]
     //
     // Advanced affix condition handling:
     // [InlineData("affixes")]            // FAILING: Advanced affix conditions
@@ -615,8 +615,8 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("compoundaffix3")]  // FAILING: Complex compound affix rules
     //
     // COMPLEXPREFIXES feature:
-    // [InlineData("complexprefixes")]    // FAILING: COMPLEXPREFIXES not implemented
-    // [InlineData("complexprefixesutf")] // FAILING: COMPLEXPREFIXES not implemented
+    [InlineData("complexprefixes")]
+    [InlineData("complexprefixesutf")]
     //
     // CONDITIONALPREFIX feature:
     // [InlineData("conditionalprefix")]  // FAILING: Conditional prefix restrictions
