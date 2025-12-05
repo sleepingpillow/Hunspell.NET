@@ -156,9 +156,9 @@ public class UpstreamAffixAndCompoundTests
     //
     // Advanced affix condition handling:
     [InlineData("affixes")]            // FAILING: Advanced affix conditions
-    // [InlineData("alias3")]             // FAILING: Advanced alias handling
+    [InlineData("alias3")]             // FAILING: Advanced alias handling
     [InlineData("condition")]          // FAILING: Advanced condition matching
-    // [InlineData("conditionalprefix")]  // FAILING: Conditional prefix application
+    [InlineData("conditionalprefix")]  // FAILING: Conditional prefix application
     //
     // FLAG types (long/num/utf8):
     [InlineData("encoding")]   // FAILING: Non-UTF8 encoding handling
@@ -218,7 +218,7 @@ public class UpstreamAffixAndCompoundTests
             var encName = AffixManager.ReadDeclaredEncodingFromAffix(aff);
             if (!string.IsNullOrEmpty(encName))
             {
-                 if (encName.StartsWith("ISO", StringComparison.OrdinalIgnoreCase) && 
+                 if (encName.StartsWith("ISO", StringComparison.OrdinalIgnoreCase) &&
                      encName.Length > 3 && char.IsDigit(encName[3]))
                  {
                      encName = "ISO-" + encName.Substring(3);

@@ -6,19 +6,23 @@ This document tracks the status of Hunspell.NET's compatibility with the upstrea
 
 | Category | Active | Commented | Total | Pass Rate |
 |----------|--------|-----------|-------|-----------|
-| GoodWords (Root Level) | 82 | 32 | 114 | 72% |
+| GoodWords (Root Level) | 87 | 27 | 114 | 76% |
 | GoodWords (Nested) | 20 | 0 | 20 | 100% |
-| WrongWords (Root Level) | 83 | 14 | 97 | 86% |
+| WrongWords (Root Level) | 86 | 11 | 97 | 89% |
 | WrongWords (Nested) | 20 | 0 | 20 | 100% |
 | Suggestions | 6 | 0 | 6 | 100% |
 | Nested Specialty Tests | 49 | 0 | 49 | 100% |
-| **Total** | **260** | **33** | **293** | **89%** |
+| **Total** | **268** | **25** | **293** | **91%** |
 
-*260 tests are passing. The 33 commented-out tests represent features not yet fully implemented.*
+*268 tests are passing. The 25 commented-out tests represent features not yet fully implemented.*
 
 ## Latest Updates (Session)
 
 ### Recently Fixed
+- ✅ **CHECKCOMPOUNDPATTERN** - Fully implemented pattern matching with replacements and flags.
+- ✅ **COMPLEXPREFIXES** - Verified RTL prefix handling.
+- ✅ **ALIAS3** - Advanced alias handling.
+- ✅ **CONDITIONALPREFIX** - Conditional prefix application.
 - ✅ **CHECKSHARPS** - Implemented German `ß` handling (SS <-> ß equivalence) with recursive candidate generation.
 - ✅ **FLAG types** - Verified support for `long`, `num`, and `UTF-8` flags.
 - ✅ **affixes** - Fixed test data to match upstream exactly.
@@ -27,7 +31,7 @@ This document tracks the status of Hunspell.NET's compatibility with the upstrea
 - ✅ **needaffix5** - Fixed recursive NEEDAFFIX logic.
 
 ### Current Status
-- **260 passing upstream tests** (89%)
+- **268 passing upstream tests** (91%)
 - **0 failing active tests**
 
 ## Test Categories
@@ -67,8 +71,11 @@ The following upstream test categories are fully passing:
 - ✅ CHECKCOMPOUNDDUP (`checkcompounddup`)
 - ✅ CHECKCOMPOUNDTRIPLE (`checkcompoundtriple`)
 - ✅ CHECKCOMPOUNDREP basic (`checkcompoundrep2`)
-- ✅ CHECKCOMPOUNDPATTERN replacements (`checkcompoundpattern3`, `checkcompoundpattern4`)
+- ✅ CHECKCOMPOUNDPATTERN (`checkcompoundpattern`, `checkcompoundpattern2`, `checkcompoundpattern3`, `checkcompoundpattern4`)
 - ✅ Compound typo guard (`limit-multiple-compounding`)
+
+#### RTL Support
+- ✅ COMPLEXPREFIXES (`complexprefixes`, `complexprefixes2`, `complexprefixesutf`)
 
 #### Advanced Affix Features
 - ✅ CIRCUMFIX superlatives (`circumfix`)
@@ -85,15 +92,6 @@ The following upstream test categories are fully passing:
 
 The following test categories are not yet fully implemented:
 
-#### CHECKCOMPOUNDPATTERN
-- ❌ `checkcompoundpattern` - Pattern matching at compound boundaries
-- ❌ `checkcompoundpattern2` - Advanced pattern matching
-
-#### COMPLEXPREFIXES (Right-to-Left Languages)
-- ❌ `complexprefixes` - RTL prefix handling
-- ❌ `complexprefixes2` - RTL prefix combinations
-- ❌ `complexprefixesutf` - RTL UTF-8 handling
-
 #### ICONV/OCONV (Character Conversion)
 - ❌ `iconv` - Input character conversion
 - ❌ `iconv2` - Advanced input conversion
@@ -108,8 +106,8 @@ The following test categories are not yet fully implemented:
 
 #### Advanced Features
 - ✅ `affixes` - Advanced affix condition handling (FIXED: Case sensitivity validation)
-- ❌ `alias3` - Advanced alias handling
-- ❌ `conditionalprefix` - Conditional prefix application
+- ✅ `alias3` - Advanced alias handling
+- ✅ `conditionalprefix` - Conditional prefix application
 - ❌ `encoding` - Non-UTF8 encoding handling
 - ❌ `fogemorpheme` - FOGEMORPHEME directive
 - ❌ `ignoresug` - IGNORESUG directive

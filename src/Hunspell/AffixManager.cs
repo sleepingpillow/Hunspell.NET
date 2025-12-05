@@ -2441,6 +2441,68 @@ internal sealed class AffixManager : IDisposable
         return true;
     }
 
+    private bool IsPatternRescuePossible(string part, string? previousPart)
+    {
+        if (_compoundPatterns.Count == 0) return false;
+
+        foreach (var pattern in _compoundPatterns)
+        {
+            if (string.IsNullOrEmpty(pattern.Replacement)) continue;
+
+            // Case 1: part is Left side, missing EndChars
+            if (!string.Equals(pattern.EndChars, "0", StringComparison.Ordinal))
+            {
+                var reconstructedLeft = part + pattern.EndChars;
+                if (reconstructedLeft.Length >= _compoundMin)
+                {
+                    if (_hashManager.GetWordFlags(reconstructedLeft) is not null) return true;
+                    if (TryFindAffixBase(reconstructedLeft, true, out _, out _, out _, out _, out _)) return true;
+                }
+            }
+
+            // Case 2: part is Right side, missing BeginChars
+            if (!string.Equals(pattern.BeginChars, "0", StringComparison.Ordinal))
+            {
+                // Only valid if previousPart ended with Replacement
+                if (previousPart != null && previousPart.EndsWith(pattern.Replacement, StringComparison.Ordinal))
+                {
+                    var reconstructedRight = pattern.BeginChars + part;
+                    if (reconstructedRight.Length >= _compoundMin)
+                    {
+                        if (_hashManager.GetWordFlags(reconstructedRight) is not null) return true;
+                        if (TryFindAffixBase(reconstructedRight, true, out _, out _, out _, out _, out _)) return true;
+                    }
+                }
+            }
+
+            // Case 3: part is Left side, contains Replacement at end
+            if (part.EndsWith(pattern.Replacement, StringComparison.Ordinal))
+            {
+                var prefix = part.Substring(0, part.Length - pattern.Replacement.Length);
+                var reconstructedLeft = prefix + pattern.EndChars;
+                if (reconstructedLeft.Length >= _compoundMin)
+                {
+                    if (_hashManager.GetWordFlags(reconstructedLeft) is not null) return true;
+                    if (TryFindAffixBase(reconstructedLeft, true, out _, out _, out _, out _, out _)) return true;
+                }
+            }
+
+            // Case 4: part is Right side, contains Replacement at start
+            if (part.StartsWith(pattern.Replacement, StringComparison.Ordinal))
+            {
+                var suffix = part.Substring(pattern.Replacement.Length);
+                var reconstructedRight = pattern.BeginChars + suffix;
+                if (reconstructedRight.Length >= _compoundMin)
+                {
+                    if (_hashManager.GetWordFlags(reconstructedRight) is not null) return true;
+                    if (TryFindAffixBase(reconstructedRight, true, out _, out _, out _, out _, out _)) return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
     /// <summary>
     /// Recursively check if a word can be split into valid compound parts.
     /// </summary>
@@ -2502,7 +2564,19 @@ internal sealed class AffixManager : IDisposable
             var part = word.Substring(position, i - position);
 
             // Check if this part is valid for its position in the compound
-            if (!IsValidCompoundPart(part, wordCount, position, i, word, out var partRequiresForce))
+            bool isValid = IsValidCompoundPart(part, wordCount, position, i, word, out var partRequiresForce);
+            bool rescued = false;
+
+            if (!isValid)
+            {
+                if (IsPatternRescuePossible(part, previousPart))
+                {
+                    isValid = true;
+                    rescued = true;
+                }
+            }
+
+            if (!isValid)
             {
                 if (string.Equals(word, "fozar", StringComparison.Ordinal) || string.Equals(word, "bozan", StringComparison.Ordinal) || string.Equals(word, "sUryOdayaM", StringComparison.Ordinal))
                 {
@@ -2513,13 +2587,21 @@ internal sealed class AffixManager : IDisposable
             }
 
             // Check compound-specific rules
-            if (!CheckCompoundRules(word, position, i, previousPart, part))
+            if (!CheckCompoundRulesWithReplacement(word, position, i, previousPart, part, out var replacementApplied))
             {
                 if (string.Equals(word, "fozar", StringComparison.Ordinal) || string.Equals(word, "bozan", StringComparison.Ordinal) || string.Equals(word, "sUryOdayaM", StringComparison.Ordinal))
                 {
                     Console.WriteLine($"DEBUG: CheckCompoundRules rejected split {position}-{i} previous='{previousPart}' part='{part}' in word '{word}'");
                 }
                 // suppressed: split failed CheckCompoundRules
+                continue;
+            }
+
+            // If the part was only valid because of a potential pattern rescue,
+            // we MUST ensure that a replacement was actually applied by the rules.
+            // Otherwise we accepted an invalid part that didn't participate in a pattern.
+            if (rescued && !replacementApplied)
+            {
                 continue;
             }
 
@@ -3176,6 +3258,12 @@ internal sealed class AffixManager : IDisposable
     /// </summary>
     private bool CheckCompoundRules(string word, int prevEnd, int currentEnd, string? previousPart, string currentPart)
     {
+        return CheckCompoundRulesWithReplacement(word, prevEnd, currentEnd, previousPart, currentPart, out _);
+    }
+
+    private bool CheckCompoundRulesWithReplacement(string word, int prevEnd, int currentEnd, string? previousPart, string currentPart, out bool replacementApplied)
+    {
+        replacementApplied = false;
         // check boundary rules for the boundary between prevEnd and currentEnd
         if (prevEnd == 0)
         {
@@ -3338,6 +3426,33 @@ internal sealed class AffixManager : IDisposable
 
                 // Collect candidate begin substrings (first atomic components)
                 var beginCandidates = new List<(string Part, string? Appended, bool Reconstructed)> { (currSurface, null, false) };
+                
+                // If the previous part ended with the replacement, the current part might be
+                // missing the pattern's BeginChars (because they were consumed by the replacement
+                // which ended up on the left side). Try to reconstruct the original right side.
+                if (!string.IsNullOrEmpty(pattern.Replacement) && !string.Equals(pattern.BeginChars, "0", StringComparison.Ordinal))
+                {
+                    if (prevSurface.EndsWith(pattern.Replacement, StringComparison.Ordinal))
+                    {
+                        var origBegin = string.Concat(pattern.BeginChars, currSurface);
+                        if (origBegin.Length >= _compoundMin)
+                        {
+                            if (_hashManager.GetWordFlags(origBegin) is not null)
+                            {
+                                if (!beginCandidates.Any(e => e.Part == origBegin)) beginCandidates.Add((origBegin, null, false));
+                            }
+                            else if (TryFindAffixBase(origBegin, true, out var baseFromOrigBegin, out _, out var origApp, out _, out _))
+                            {
+                                if (baseFromOrigBegin is not null && baseFromOrigBegin.Length >= _compoundMin)
+                                {
+                                    if (!beginCandidates.Any(e => e.Part == baseFromOrigBegin && e.Appended == origApp)) beginCandidates.Add((baseFromOrigBegin, origApp, true));
+                                }
+                                if (!beginCandidates.Any(e => e.Part == origBegin && e.Appended == origApp)) beginCandidates.Add((origBegin, origApp, false));
+                            }
+                        }
+                    }
+                }
+
                 for (int cut = _compoundMin; cut <= currSurface.Length - _compoundMin; cut++)
                 {
                     var head = currSurface.Substring(0, cut);
@@ -3383,6 +3498,28 @@ internal sealed class AffixManager : IDisposable
                                     if (!beginCandidates.Any(e => e.Part == baseFromOrigBegin && e.Appended == origApp)) beginCandidates.Add((baseFromOrigBegin, origApp, true));
                                 }
                                 if (!beginCandidates.Any(e => e.Part == origBegin && e.Appended == origApp)) beginCandidates.Add((origBegin, origApp, false));
+                            }
+                        }
+                        
+                        // Also try to reconstruct the LEFT side (prevSurface) because if the replacement
+                        // is on the right, the left side might be missing the EndChars.
+                        if (!string.Equals(pattern.EndChars, "0", StringComparison.Ordinal))
+                        {
+                            var origEnd = string.Concat(prevSurface, pattern.EndChars);
+                            if (origEnd.Length >= _compoundMin)
+                            {
+                                if (_hashManager.GetWordFlags(origEnd) is not null)
+                                {
+                                    if (!endCandidates.Any(e => e.Part == origEnd)) endCandidates.Add((origEnd, null, false));
+                                }
+                                else if (TryFindAffixBase(origEnd, true, out var baseFromOrigEnd, out _, out var origApp2, out _, out _))
+                                {
+                                    if (baseFromOrigEnd is not null && baseFromOrigEnd.Length >= _compoundMin)
+                                    {
+                                        if (!endCandidates.Any(e => e.Part == baseFromOrigEnd && e.Appended == origApp2)) endCandidates.Add((baseFromOrigEnd, origApp2, true));
+                                    }
+                                    if (!endCandidates.Any(e => e.Part == origEnd && e.Appended == origApp2)) endCandidates.Add((origEnd, origApp2, false));
+                                }
                             }
                         }
                     }
@@ -3461,6 +3598,7 @@ internal sealed class AffixManager : IDisposable
                                         {
                                             if (string.Equals(constructedSurface, observedCombined, StringComparison.Ordinal))
                                             {
+                                                replacementApplied = true;
                                                 continue; // replacement produced the observed surface -> allow
                                             }
                                         }
@@ -3471,11 +3609,13 @@ internal sealed class AffixManager : IDisposable
                                             // preserves previous behavior).
                                             if (string.Equals(constructedSurface, word, StringComparison.Ordinal))
                                             {
+                                                replacementApplied = true;
                                                 continue;
                                             }
 
                                             if (_hashManager.Lookup(constructedSurface) || IsCompoundMadeOfTwoWords(constructedSurface, out _, out _))
                                             {
+                                                replacementApplied = true;
                                                 continue;
                                             }
                                         }
