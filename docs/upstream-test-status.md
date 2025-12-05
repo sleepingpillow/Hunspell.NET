@@ -6,27 +6,29 @@ This document tracks the status of Hunspell.NET's compatibility with the upstrea
 
 | Category | Active | Commented | Total | Pass Rate |
 |----------|--------|-----------|-------|-----------|
-| GoodWords (Root Level) | 76 | 38 | 114 | 69% |
+| GoodWords (Root Level) | 82 | 32 | 114 | 72% |
 | GoodWords (Nested) | 20 | 0 | 20 | 100% |
-| WrongWords (Root Level) | 77 | 20 | 97 | 81% |
+| WrongWords (Root Level) | 83 | 14 | 97 | 86% |
 | WrongWords (Nested) | 20 | 0 | 20 | 100% |
 | Suggestions | 6 | 0 | 6 | 100% |
-| Nested Specialty Tests | 36 | 0 | 36 | 100% |
-| **Total** | **235** | **58** | **293** | **82%** |
+| Nested Specialty Tests | 49 | 0 | 49 | 100% |
+| **Total** | **260** | **33** | **293** | **89%** |
 
-*239 tests are passing. The 58 commented-out tests represent features not yet fully implemented.*
+*260 tests are passing. The 33 commented-out tests represent features not yet fully implemented.*
 
 ## Latest Updates (Session)
 
 ### Recently Fixed
-- ✅ **affixes** - Fixed test data to match upstream exactly (replaced 5-entry wrong version with 3-entry upstream version, corrected flags from R/D to A/B)
-- ✅ **i58202** - Case sensitivity validation now working (weird mixed-case like "fOO" properly rejected)
-- ✅ **condition** - Fixed encoding (ISO-8859-2) and empty affix stripping logic.
-- ✅ **needaffix5** - Fixed recursive NEEDAFFIX logic (only enforce at top level, count clean affixes).
+- ✅ **CHECKSHARPS** - Implemented German `ß` handling (SS <-> ß equivalence) with recursive candidate generation.
+- ✅ **FLAG types** - Verified support for `long`, `num`, and `UTF-8` flags.
+- ✅ **affixes** - Fixed test data to match upstream exactly.
+- ✅ **i58202** - Case sensitivity validation now working.
+- ✅ **condition** - Fixed encoding and empty affix stripping logic.
+- ✅ **needaffix5** - Fixed recursive NEEDAFFIX logic.
 
 ### Current Status
-- **377 passing tests** (99.5%)
-- **0 failing tests** (all active tests passing)
+- **260 passing upstream tests** (89%)
+- **0 failing active tests**
 
 ## Test Categories
 
@@ -37,7 +39,8 @@ The following upstream test categories are fully passing:
 #### Core Features
 - ✅ Basic spell checking (`base`, `base_utf`)
 - ✅ Affix handling (`alias`, `alias2`, `fullstrip`, `zeroaffix`)
-- ✅ Case handling (`allcaps`, `allcaps2`, `allcaps3`, `allcaps_utf`, `keepcase`)
+- ✅ FLAG types (`flag`, `flaglong`, `flagnum`, `flagutf8`)
+- ✅ Case handling (`allcaps`, `allcaps2`, `allcaps3`, `allcaps_utf`, `keepcase`, `checksharps`, `checksharpsutf`)
 - ✅ Compound words (`compoundflag`, `compoundforbid`, `compoundaffix`, `compoundaffix2`, `compoundaffix3`)
 - ✅ COMPOUNDRULE (`compoundrule` through `compoundrule8`)
 - ✅ Break patterns (`break`, `breakdefault`, `breakoff`)
@@ -82,10 +85,6 @@ The following upstream test categories are fully passing:
 
 The following test categories are not yet fully implemented:
 
-#### CHECKSHARPS (German ß Handling)
-- ❌ `checksharps` - CHECKSHARPS directive not implemented
-- ❌ `checksharpsutf` - CHECKSHARPS UTF-8 not implemented
-
 #### CHECKCOMPOUNDPATTERN
 - ❌ `checkcompoundpattern` - Pattern matching at compound boundaries
 - ❌ `checkcompoundpattern2` - Advanced pattern matching
@@ -94,12 +93,6 @@ The following test categories are not yet fully implemented:
 - ❌ `complexprefixes` - RTL prefix handling
 - ❌ `complexprefixes2` - RTL prefix combinations
 - ❌ `complexprefixesutf` - RTL UTF-8 handling
-
-#### FLAG Types
-- ❌ `flag` - FLAG directive type handling
-- ❌ `flaglong` - FLAG long type (two-character flags)
-- ❌ `flagnum` - FLAG num type (numeric flags)
-- ❌ `flagutf8` - FLAG UTF-8 type
 
 #### ICONV/OCONV (Character Conversion)
 - ❌ `iconv` - Input character conversion
@@ -155,15 +148,13 @@ The following test categories are not yet fully implemented:
 Based on the failing tests, the following areas should be prioritized for implementation:
 
 ### High Priority
-1. **FLAG Types** - Enabling `FLAG long`, `FLAG num`, and `FLAG UTF-8` would unlock many dictionaries
-2. **CHECKSHARPS** - Required for proper German language support
-3. **CHECKCOMPOUNDPATTERN** - Needed for advanced compound word validation
-4. **ICONV/OCONV** - Character conversion for non-UTF8 dictionaries
+1. **CHECKCOMPOUNDPATTERN** - Needed for advanced compound word validation
+2. **ICONV/OCONV** - Character conversion for non-UTF8 dictionaries
+3. **German Compounding** - Full German compound word support
 
 ### Medium Priority
-1. **German Compounding** - Full German compound word support
-2. **COMPLEXPREFIXES** - Right-to-left language support
-3. **Advanced NEEDAFFIX** - Complex NEEDAFFIX scenarios
+1. **COMPLEXPREFIXES** - Right-to-left language support
+2. **Advanced NEEDAFFIX** - Complex NEEDAFFIX scenarios
 
 ### Lower Priority
 1. **Morphological Analysis** - Word form analysis

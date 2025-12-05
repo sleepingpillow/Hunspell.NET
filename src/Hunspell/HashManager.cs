@@ -30,12 +30,15 @@ internal sealed class HashManager : IDisposable
     private enum FlagFormat { Single, Long, Num, Utf8 }
     private FlagFormat _flagFormat = FlagFormat.Single;
     private List<string> _flagAliases = new() { string.Empty };
+    private bool _checkSharps;
 
     public HashManager(string dictionaryPath, string? encodingHint = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(dictionaryPath);
         LoadDictionary(dictionaryPath, encodingHint);
     }
+
+    public void SetCheckSharps(bool enabled) => _checkSharps = enabled;
 
     private void LoadDictionary(string dictionaryPath, string? encodingHint = null)
     {
@@ -266,56 +269,113 @@ internal sealed class HashManager : IDisposable
         // _words uses a case-insensitive key comparison. Use TryGetValue to
         // retrieve all variants for the surface form and then decide whether
         // a match should be allowed based on exact-case or permissive rules.
-        if (!_words.TryGetValue(word, out var entries)) return false;
-
-        // If an exact-case variant exists, accept it immediately
-        if (entries.Any(e => string.Equals(e.Word, word, StringComparison.Ordinal)))
+        if (_words.TryGetValue(word, out var entries))
         {
-            return true;
-        }
-
-        // Otherwise, apply a refined case-handling rule set:
-        // - If the dictionary has a lower-case variant, allow NORMAL capitalization
-        //   (all-lower, initial-capital, or all-upper) but reject weird mixed case.
-        // - If the dictionary has an all-upper variant (acronym), accept only ALL-UPPER words.
-        // - If the dictionary has mixed-case variants (e.g., OpenOffice.org), accept
-        //   only exact-case or the ALL-UPPER variant (OpenOffice.org -> OPENOFFICE.ORG).
-        bool hasAllLower = entries.Any(e => e.Word == e.Word.ToLowerInvariant());
-        if (hasAllLower)
-        {
-            // Accept normal capitalization patterns: lowercase, initial-cap, or all-caps
-            // Reject weird mixed-case like "fOO" or "BAr"
-            bool isLowercase = string.Equals(word, word.ToLowerInvariant(), StringComparison.Ordinal);
-            bool isAllUpper = string.Equals(word, word.ToUpperInvariant(), StringComparison.Ordinal);
-            bool isInitialCap = word.Length > 0 &&
-                                char.IsUpper(word[0]) &&
-                                string.Equals(word.Substring(1), word.Substring(1).ToLowerInvariant(), StringComparison.Ordinal);
-
-            if (isLowercase || isAllUpper || isInitialCap)
+            // If an exact-case variant exists, accept it immediately
+            if (entries.Any(e => string.Equals(e.Word, word, StringComparison.Ordinal)))
             {
                 return true;
             }
-            // Otherwise it's weird mixed case, reject it
-            return false;
+
+            // Otherwise, apply a refined case-handling rule set:
+            // - If the dictionary has a lower-case variant, allow NORMAL capitalization
+            //   (all-lower, initial-capital, or all-upper) but reject weird mixed case.
+            // - If the dictionary has an all-upper variant (acronym), accept only ALL-UPPER words.
+            // - If the dictionary has mixed-case variants (e.g., OpenOffice.org), accept
+            //   only exact-case or the ALL-UPPER variant (OpenOffice.org -> OPENOFFICE.ORG).
+            bool hasAllLower = entries.Any(e => e.Word == e.Word.ToLowerInvariant());
+            if (hasAllLower)
+            {
+                // Accept normal capitalization patterns: lowercase, initial-cap, or all-caps
+                // Reject weird mixed-case like "fOO" or "BAr"
+                bool isLowercase = string.Equals(word, word.ToLowerInvariant(), StringComparison.Ordinal);
+                bool isAllUpper = string.Equals(word, word.ToUpperInvariant(), StringComparison.Ordinal);
+                bool isInitialCap = word.Length > 0 &&
+                                    char.IsUpper(word[0]) &&
+                                    string.Equals(word.Substring(1), word.Substring(1).ToLowerInvariant(), StringComparison.Ordinal);
+
+                if (isLowercase || isAllUpper || isInitialCap)
+                {
+                    return true;
+                }
+                // Otherwise it's weird mixed case, reject it (but fall through to CHECKSHARPS)
+            }
+            else
+            {
+                bool hasAllUpper = entries.Any(e => e.Word == e.Word.ToUpperInvariant());
+                bool hasMixed = entries.Any(e => !(e.Word == e.Word.ToUpperInvariant() || e.Word == e.Word.ToLowerInvariant()));
+
+                // If dictionary contains an all-upper entry, accept only all-upper input
+                if (hasAllUpper && string.Equals(word, word.ToUpperInvariant(), StringComparison.Ordinal))
+                {
+                    return true;
+                }
+
+                // If dictionary contains a mixed-case entry, accept its all-upper variant
+                // (e.g., OPENOFFICE.ORG for OpenOffice.org) but not arbitrary case changes.
+                if (hasMixed && entries.Any(e => string.Equals(e.Word.ToUpperInvariant(), word, StringComparison.Ordinal)))
+                {
+                    return true;
+                }
+            }
         }
 
-        bool hasAllUpper = entries.Any(e => e.Word == e.Word.ToUpperInvariant());
-        bool hasMixed = entries.Any(e => !(e.Word == e.Word.ToUpperInvariant() || e.Word == e.Word.ToLowerInvariant()));
-
-        // If dictionary contains an all-upper entry, accept only all-upper input
-        if (hasAllUpper && string.Equals(word, word.ToUpperInvariant(), StringComparison.Ordinal))
+        // CHECKSHARPS support: if enabled and word contains SS, try replacing with ß
+        // This handles cases like "MÜSSIG" -> "müßig" (where ß uppercases to SS)
+        if (_checkSharps && word.Contains("SS", StringComparison.Ordinal))
         {
-            return true;
-        }
+            foreach (var candidate in GenerateSharpCandidates(word))
+            {
+                if (candidate == word) continue;
 
-        // If dictionary contains a mixed-case entry, accept its all-upper variant
-        // (e.g., OPENOFFICE.ORG for OpenOffice.org) but not arbitrary case changes.
-        if (hasMixed && entries.Any(e => string.Equals(e.Word.ToUpperInvariant(), word, StringComparison.Ordinal)))
-        {
-            return true;
+                if (_words.TryGetValue(candidate, out var sharpEntries))
+                {
+                    // If the original word is AllUpper (e.g. MÜSSIG) and we found a valid entry
+                    // via ß-substitution, accept it.
+                    if (string.Equals(word, word.ToUpperInvariant(), StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+
+                    // Also accept if the candidate matches the dictionary entry exactly (modulo SS/ß)
+                    // This handles "Ausstoss" -> "Ausstoß" (if casing matches)
+                    if (sharpEntries.Any(e => string.Equals(e.Word, candidate, StringComparison.Ordinal)))
+                    {
+                        return true;
+                    }
+                }
+            }
         }
 
         return false;
+    }
+
+    private IEnumerable<string> GenerateSharpCandidates(string word)
+    {
+        return GenerateSharpCandidatesImpl(word, 0);
+    }
+
+    private IEnumerable<string> GenerateSharpCandidatesImpl(string word, int start)
+    {
+        int idx = word.IndexOf("SS", start, StringComparison.Ordinal);
+        if (idx == -1)
+        {
+            yield return word;
+            yield break;
+        }
+
+        // Option 1: Keep "SS" (don't replace this instance)
+        foreach (var res in GenerateSharpCandidatesImpl(word, idx + 1))
+        {
+            yield return res;
+        }
+
+        // Option 2: Replace "SS" with "ß"
+        string replaced = word.Substring(0, idx) + "ß" + word.Substring(idx + 2);
+        foreach (var res in GenerateSharpCandidatesImpl(replaced, idx + 1))
+        {
+            yield return res;
+        }
     }
 
     /// <summary>

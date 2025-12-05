@@ -63,6 +63,8 @@ internal sealed class AffixManager : IDisposable
     private bool _checkCompoundTriple = false;
     private bool _simplifiedTriple = false;
     private bool _checkCompoundRep = false;
+    private bool _checkSharps = false;
+    public bool CheckSharps => _checkSharps;
 
     // Suggestion options
     private int _maxCompoundSuggestions = 0; // 0 means unlimited
@@ -290,7 +292,7 @@ internal sealed class AffixManager : IDisposable
                     norm = "ISO-" + norm.Substring(3);
                 }
                 norm = norm.Replace('_', '-');
-                
+
                 var enc = System.Text.Encoding.GetEncoding(norm);
                 using var stream = File.OpenRead(affixPath);
                 // Disable BOM detection to ensure we strictly use the declared encoding
@@ -417,8 +419,8 @@ internal sealed class AffixManager : IDisposable
                 // line and try to assemble a full rule line.
                 // Note: Check for Y/N cross-product flag to avoid confusing a rule line
                 // like "SFX Z a 0 ..." (where 0 is parsed as count) with a header.
-                bool isHeader = hdrParts.Length >= 4 && 
-                                int.TryParse(hdrParts[3], out _) && 
+                bool isHeader = hdrParts.Length >= 4 &&
+                                int.TryParse(hdrParts[3], out _) &&
                                 (hdrParts[2].Equals("Y", StringComparison.OrdinalIgnoreCase) || hdrParts[2].Equals("N", StringComparison.OrdinalIgnoreCase));
 
                 if (isHeader)
@@ -666,6 +668,11 @@ internal sealed class AffixManager : IDisposable
 
             case "CHECKCOMPOUNDTRIPLE":
                 _checkCompoundTriple = true;
+                break;
+
+            case "CHECKSHARPS":
+                _checkSharps = true;
+                _hashManager.SetCheckSharps(true);
                 break;
 
             case "SIMPLIFIEDTRIPLE":

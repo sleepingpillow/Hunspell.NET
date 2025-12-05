@@ -90,7 +90,16 @@ public sealed class HunspellSpellChecker : IDisposable
                         bool isInitCap = char.IsUpper(w[0]) && string.Equals(w.Substring(1), w.Substring(1).ToLowerInvariant(), StringComparison.Ordinal);
                         if (isAllCaps || isInitCap)
                         {
-                            return false;
+                            // CHECKSHARPS exception: if enabled and word contains ß, allow InitCap
+                            // (German words with ß are allowed to be capitalized even if KEEPCASE is set)
+                            if (_affixManager.CheckSharps && w.Contains('ß') && isInitCap)
+                            {
+                                // allowed
+                            }
+                            else
+                            {
+                                return false;
+                            }
                         }
                     }
                 }

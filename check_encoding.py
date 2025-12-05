@@ -9,7 +9,7 @@ def check_file(path):
             print(f"UTF-8: {data.decode('utf-8')}")
         except:
             print("Not valid UTF-8")
-        
+
         try:
             print(f"ISO-8859-2: {data.decode('iso-8859-2')}")
         except:

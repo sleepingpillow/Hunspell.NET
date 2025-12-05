@@ -138,8 +138,8 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("2999225")]        // FAILING: Bug tracker test (no test data)
     //
     // CHECKSHARPS feature (German ß handling):
-    // [InlineData("checksharps")]    // FAILING: CHECKSHARPS not implemented
-    // [InlineData("checksharpsutf")] // FAILING: CHECKSHARPS not implemented
+    [InlineData("checksharps")]    // FAILING: CHECKSHARPS not implemented
+    [InlineData("checksharpsutf")] // FAILING: CHECKSHARPS not implemented
     //
     // CHECKCOMPOUNDPATTERN feature:
     [InlineData("checkcompoundcase2")]     // FAILING: Advanced compound case handling
