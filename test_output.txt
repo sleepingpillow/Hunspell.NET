@@ -1,0 +1,24 @@
+  Determining projects to restore...
+  All projects are up-to-date for restore.
+  Hunspell -> C:\Users\Niklas\OneDrive\Dokument\GitHub\Hunspell.NET\src\Hunspell\bin\Debug\net10.0\Hunspell.dll
+  Tools.Munch -> C:\Users\Niklas\OneDrive\Dokument\GitHub\Hunspell.NET\src\Tools.Munch\bin\Debug\net10.0\Tools.Munch.dll
+  Hunspell.Tests -> C:\Users\Niklas\OneDrive\Dokument\GitHub\Hunspell.NET\tests\Hunspell.Tests\bin\Debug\net10.0\Hunspell.Tests.dll
+Test run for C:\Users\Niklas\OneDrive\Dokument\GitHub\Hunspell.NET\tests\Hunspell.Tests\bin\Debug\net10.0\Hunspell.Tests.dll (.NETCoreApp,Version=v10.0)
+  Tools.Munch.Tests -> C:\Users\Niklas\OneDrive\Dokument\GitHub\Hunspell.NET\tests\Tools.Munch.Tests\bin\Debug\net10.0\Tools.Munch.Tests.dll
+Test run for C:\Users\Niklas\OneDrive\Dokument\GitHub\Hunspell.NET\tests\Tools.Munch.Tests\bin\Debug\net10.0\Tools.Munch.Tests.dll (.NETCoreApp,Version=v10.0)
+A total of 1 test files matched the specified pattern.
+A total of 1 test files matched the specified pattern.
+[xUnit.net 00:00:00.72]     Tools.Munch.Tests.MunchTests.ConditionalSuffix_ShouldRespectConditions [SKIP]
+[xUnit.net 00:00:01.26]     Hunspell.Tests.UpstreamAffixAndCompoundTests.UpstreamGoodWords_RootLevel_ShouldPass(baseName: "condition") [FAIL]
+  Skipped Tools.Munch.Tests.MunchTests.ConditionalSuffix_ShouldRespectConditions [1 ms]
+
+Skipped! - Failed:     0, Passed:     0, Skipped:     1, Total:     1, Duration: 7 ms - Tools.Munch.Tests.dll (net10.0)
+  Failed Hunspell.Tests.UpstreamAffixAndCompoundTests.UpstreamGoodWords_RootLevel_ShouldPass(baseName: "condition") [14 ms]
+  Error Message:
+   Expected 'pre1ofo' from condition.good to be accepted
+  Stack Trace:
+     at Hunspell.Tests.UpstreamAffixAndCompoundTests.UpstreamGoodWords_RootLevel_ShouldPass(String baseName) in C:\Users\Niklas\OneDrive\Dokument\GitHub\Hunspell.NET\tests\Hunspell.Tests\UpstreamAffixAndCompoundTests.cs:line 217
+   at InvokeStub_UpstreamAffixAndCompoundTests.UpstreamGoodWords_RootLevel_ShouldPass(Object, Span`1)
+   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)
+
+Failed!  - Failed:     1, Passed:     5, Skipped:     0, Total:     6, Duration: 284 ms - Hunspell.Tests.dll (net10.0)

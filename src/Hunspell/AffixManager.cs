@@ -411,6 +411,14 @@ internal sealed class AffixManager : IDisposable
                                 // continuation is already a full rule line
                                 line = nextNonEmpty;
                             }
+                            else if (contParts.Length >= 4 && int.TryParse(contParts[3], out _))
+                            {
+                                // The continuation line is itself a header (e.g., "PFX P N 18").
+                                // This can happen when we have back-to-back rule sets. Don't consume
+                                // this line; instead, set it as the current line so it will be
+                                // processed as a header in the next iteration of the main loop.
+                                line = nextNonEmpty;
+                            }
                             else
                             {
                                 // continuation seems partial (e.g., "SFX S 0"); read one
