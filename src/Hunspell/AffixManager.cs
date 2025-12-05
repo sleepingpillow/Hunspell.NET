@@ -276,31 +276,60 @@ internal sealed class AffixManager : IDisposable
         // contain accented tokens are parsed correctly.
         System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
 
-        string content;
-        using (var stream = File.OpenRead(affixPath))
-        using (var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
+        string? content = null;
+
+        // Try to use the declared encoding first
+        var declaredEncName = ReadDeclaredEncodingFromAffix(affixPath);
+        if (!string.IsNullOrEmpty(declaredEncName))
         {
-            content = reader.ReadToEnd();
+            try
+            {
+                var norm = declaredEncName;
+                if (norm.Length > 3 && norm.StartsWith("ISO", StringComparison.OrdinalIgnoreCase) && char.IsDigit(norm[3]))
+                {
+                    norm = "ISO-" + norm.Substring(3);
+                }
+                norm = norm.Replace('_', '-');
+                
+                var enc = System.Text.Encoding.GetEncoding(norm);
+                using var stream = File.OpenRead(affixPath);
+                // Disable BOM detection to ensure we strictly use the declared encoding
+                using var reader = new StreamReader(stream, enc, detectEncodingFromByteOrderMarks: false);
+                content = reader.ReadToEnd();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"DEBUG: LoadAffix failed to use declared encoding: {ex.Message}");
+            }
         }
 
-        if (content.Contains('\uFFFD'))
+        if (content == null)
         {
-            var fallbacks = new[] { 1250, 28592, 1252, 28591, 28605 };
-            foreach (var cp in fallbacks)
+            using (var stream = File.OpenRead(affixPath))
+            using (var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
             {
-                try
+                content = reader.ReadToEnd();
+            }
+
+            if (content.Contains('\uFFFD'))
+            {
+                var fallbacks = new[] { 1250, 28592, 1252, 28591, 28605 };
+                foreach (var cp in fallbacks)
                 {
-                    var enc = System.Text.Encoding.GetEncoding(cp);
-                    using var stream = File.OpenRead(affixPath);
-                    using var reader = new StreamReader(stream, enc, detectEncodingFromByteOrderMarks: false);
-                    var attempt = reader.ReadToEnd();
-                    if (!attempt.Contains('\uFFFD'))
+                    try
                     {
-                        content = attempt;
-                        break;
+                        var enc = System.Text.Encoding.GetEncoding(cp);
+                        using var stream = File.OpenRead(affixPath);
+                        using var reader = new StreamReader(stream, enc, detectEncodingFromByteOrderMarks: false);
+                        var attempt = reader.ReadToEnd();
+                        if (!attempt.Contains('\uFFFD'))
+                        {
+                            content = attempt;
+                            break;
+                        }
                     }
+                    catch { }
                 }
-                catch { }
             }
         }
 
@@ -386,7 +415,13 @@ internal sealed class AffixManager : IDisposable
                 // If this is a header line (e.g., "SFX X Y 1") then the next lines
                 // contain the actual rule(s). Read the next non-empty, non-comment
                 // line and try to assemble a full rule line.
-                if (hdrParts.Length >= 4 && int.TryParse(hdrParts[3], out _))
+                // Note: Check for Y/N cross-product flag to avoid confusing a rule line
+                // like "SFX Z a 0 ..." (where 0 is parsed as count) with a header.
+                bool isHeader = hdrParts.Length >= 4 && 
+                                int.TryParse(hdrParts[3], out _) && 
+                                (hdrParts[2].Equals("Y", StringComparison.OrdinalIgnoreCase) || hdrParts[2].Equals("N", StringComparison.OrdinalIgnoreCase));
+
+                if (isHeader)
                 {
                     string? nextNonEmpty = null;
                     while (sr.ReadLine() is { } extra)
@@ -873,7 +908,9 @@ internal sealed class AffixManager : IDisposable
         // Some affix files use a header line like "SFX A Y 1" which indicates
         // the flag and a following count. If the 4th token is an integer this is
         // a header and not an actual rule line; skip it.
-        if (int.TryParse(parts[3], out _))
+        // Note: We must be careful not to skip a rule like "SFX Z a 0 ..." where
+        // the affix is "0" (empty). We check if the 3rd token is Y/N (cross product).
+        if (int.TryParse(parts[3], out _) && (parts[2].Equals("Y", StringComparison.OrdinalIgnoreCase) || parts[2].Equals("N", StringComparison.OrdinalIgnoreCase)))
         {
             return;
         }
@@ -884,7 +921,7 @@ internal sealed class AffixManager : IDisposable
         // Extract only the affix text portion before any slash.
         var affixField = parts[3];
         var affixParts = affixField.Split('/', StringSplitOptions.None);
-        var affix = affixParts[0];
+        var affix = affixParts[0] == "0" ? string.Empty : affixParts[0];
         var appendedFlag = affixParts.Length > 1 ? affixParts[1].Trim() : null;
         var condition = parts.Length > 4 ? parts[4] : ".";
 
@@ -2042,7 +2079,7 @@ internal sealed class AffixManager : IDisposable
                 }
 
                 // If not a direct dictionary entry, attempt to reconstruct via affix rules
-                if (TryFindAffixBase(p, allowBaseOnlyInCompound: true, out var baseCandidate, out _, out var appendedFlag, out _))
+                if (TryFindAffixBase(p, allowBaseOnlyInCompound: true, out var baseCandidate, out _, out var appendedFlag, out _, out _))
                 {
                     if (string.IsNullOrEmpty(baseCandidate)) return false;
 
@@ -2128,7 +2165,7 @@ internal sealed class AffixManager : IDisposable
                     }
                 }
 
-                if (TryFindAffixBase(p, allowBaseOnlyInCompound: true, out var baseCandidate, out _, out var appendedFlag, out _))
+                if (TryFindAffixBase(p, allowBaseOnlyInCompound: true, out var baseCandidate, out _, out var appendedFlag, out _, out _))
                 {
                     if (!string.IsNullOrEmpty(baseCandidate))
                     {
@@ -2685,7 +2722,7 @@ internal sealed class AffixManager : IDisposable
             AffixMatchKind matchKind = default;
             string? appendedFlag = null;
 
-            if (TryFindAffixBase(part, allowBaseOnlyInCompound: true, out var tempBase, out var tempKind, out var tempAppended, out _))
+            if (TryFindAffixBase(part, allowBaseOnlyInCompound: true, out var tempBase, out var tempKind, out var tempAppended, out _, out _))
             {
                 affixBase = tempBase;
                 matchKind = tempKind;
@@ -2718,7 +2755,7 @@ internal sealed class AffixManager : IDisposable
                             break;
                         }
 
-                        if (TryFindAffixBase(origBegin, true, out var replacementBase, out var replacementKind, out var replacementAppend, out _) &&
+                        if (TryFindAffixBase(origBegin, true, out var replacementBase, out var replacementKind, out var replacementAppend, out _, out _) &&
                             CandidateHasRequiredFlag(replacementBase ?? origBegin, replacementAppend, pattern.BeginFlag) &&
                             EvaluateAffixBaseCandidate(part, replacementBase, replacementKind, replacementAppend, wordCount, endPos, fullWord, out requiresForceUCase))
                         {
@@ -2741,7 +2778,7 @@ internal sealed class AffixManager : IDisposable
                             break;
                         }
 
-                            if (TryFindAffixBase(origEnd, true, out var replacementBase2, out var replacementKind2, out var replacementAppend2, out _) &&
+                            if (TryFindAffixBase(origEnd, true, out var replacementBase2, out var replacementKind2, out var replacementAppend2, out _, out _) &&
                                 CandidateHasRequiredFlag(replacementBase2 ?? origEnd, replacementAppend2, pattern.EndFlag) &&
                                 EvaluateAffixBaseCandidate(part, replacementBase2, replacementKind2, replacementAppend2, wordCount, endPos, fullWord, out requiresForceUCase))
                         {
@@ -2777,7 +2814,7 @@ internal sealed class AffixManager : IDisposable
                                     break;
                                 }
 
-                                if (TryFindAffixBase(augmentedPart, true, out var augmentedBase, out var augmentedKind, out var augmentedApp, out _) &&
+                                if (TryFindAffixBase(augmentedPart, true, out var augmentedBase, out var augmentedKind, out var augmentedApp, out _, out _) &&
                                     CandidateHasRequiredFlag(augmentedBase ?? augmentedPart, augmentedApp, pattern.BeginFlag) &&
                                     EvaluateAffixBaseCandidate(augmentedPart, augmentedBase, augmentedKind, augmentedApp, wordCount, endPos, fullWord, out requiresForceUCase))
                                 {
@@ -3251,7 +3288,7 @@ internal sealed class AffixManager : IDisposable
                         {
                             if (!endCandidates.Any(e => e.Part == tail)) endCandidates.Add((tail, null, false));
                     }
-                        else if (TryFindAffixBase(tail, true, out var tailBase, out _, out var tailApp, out _))
+                        else if (TryFindAffixBase(tail, true, out var tailBase, out _, out var tailApp, out _, out _))
                     {
                         if (tailBase is not null && tailBase.Length >= _compoundMin)
                         {
@@ -3280,7 +3317,7 @@ internal sealed class AffixManager : IDisposable
                             {
                                 if (!endCandidates.Any(e => e.Part == origEnd)) endCandidates.Add((origEnd, null, false));
                             }
-                            else if (TryFindAffixBase(origEnd, true, out var baseFromOrigEnd, out _, out var origApp2, out _))
+                            else if (TryFindAffixBase(origEnd, true, out var baseFromOrigEnd, out _, out var origApp2, out _, out _))
                             {
                                 if (baseFromOrigEnd is not null && baseFromOrigEnd.Length >= _compoundMin)
                                 {
@@ -3302,7 +3339,7 @@ internal sealed class AffixManager : IDisposable
                     {
                         if (!beginCandidates.Any(e => e.Part == head)) beginCandidates.Add((head, null, false));
                     }
-                    else if (TryFindAffixBase(head, true, out var headBase, out _, out var headApp, out _))
+                    else if (TryFindAffixBase(head, true, out var headBase, out _, out var headApp, out _, out _))
                     {
                         if (headBase is not null && headBase.Length >= _compoundMin)
                         {
@@ -3332,7 +3369,7 @@ internal sealed class AffixManager : IDisposable
                             {
                                 if (!beginCandidates.Any(e => e.Part == origBegin)) beginCandidates.Add((origBegin, null, false));
                             }
-                            else if (TryFindAffixBase(origBegin, true, out var baseFromOrigBegin, out _, out var origApp, out _))
+                            else if (TryFindAffixBase(origBegin, true, out var baseFromOrigBegin, out _, out var origApp, out _, out _))
                             {
                                 if (baseFromOrigBegin is not null && baseFromOrigBegin.Length >= _compoundMin)
                                 {
@@ -3581,7 +3618,7 @@ internal sealed class AffixManager : IDisposable
 
         // If it's affix-derived, try to locate the base and see whether the
         // base (including appended affix flags) indicates forbidden.
-        if (TryFindAffixBase(word, allowBaseOnlyInCompound: false, out var baseCandidate, out _, out var appended, out _))
+        if (TryFindAffixBase(word, allowBaseOnlyInCompound: false, out var baseCandidate, out _, out var appended, out _, out _))
         {
             if (baseCandidate is not null)
             {
@@ -3638,7 +3675,7 @@ internal sealed class AffixManager : IDisposable
 
         // Use the helper that returns the base root candidate when a derivation
         // is found; this centralizes the logic for nested affix combinations.
-        return TryFindAffixBase(word, allowBaseOnlyInCompound, out _, out _, out _, out _);
+        return TryFindAffixBase(word, allowBaseOnlyInCompound, out _, out _, out _, out _, out _);
     }
 
     /// <summary>
@@ -3652,7 +3689,7 @@ internal sealed class AffixManager : IDisposable
     {
         if (string.IsNullOrEmpty(word)) return false;
 
-        if (!TryFindAffixBase(word, allowBaseOnlyInCompound: false, out var baseCandidate, out var kind, out var appended, out _)) return false;
+        if (!TryFindAffixBase(word, allowBaseOnlyInCompound: false, out var baseCandidate, out var kind, out var appended, out _, out _)) return false;
         if (string.IsNullOrEmpty(baseCandidate)) return false;
 
         // If there are no appended flags there's nothing to check here.
@@ -3709,10 +3746,11 @@ internal sealed class AffixManager : IDisposable
     /// </summary>
     private enum AffixMatchKind { None, PrefixOnly, SuffixOnly, PrefixThenSuffix, SuffixThenPrefix }
 
-    private bool TryFindAffixBase(string word, bool allowBaseOnlyInCompound, out string? baseCandidate, out AffixMatchKind kind, out string? appendedFlag, out int affixCount, int depth = 0)
+    private bool TryFindAffixBase(string word, bool allowBaseOnlyInCompound, out string? baseCandidate, out AffixMatchKind kind, out string? appendedFlag, out int affixCount, out int cleanAffixCount, int depth = 0)
     {
-        if (!TryFindAffixBaseCore(word, allowBaseOnlyInCompound, out baseCandidate, out kind, out appendedFlag, out affixCount, depth))
+        if (!TryFindAffixBaseCore(word, allowBaseOnlyInCompound, out baseCandidate, out kind, out appendedFlag, out affixCount, out cleanAffixCount, depth))
         {
+            cleanAffixCount = 0;
             return false;
         }
 
@@ -3722,31 +3760,36 @@ internal sealed class AffixManager : IDisposable
             kind = AffixMatchKind.None;
             appendedFlag = null;
             affixCount = 0;
+            cleanAffixCount = 0;
             return false;
         }
 
-        if (!SatisfiesNeedAffixRequirement(baseCandidate, affixCount, appendedFlag))
+        if (depth == 0 && !SatisfiesNeedAffixRequirement(baseCandidate, affixCount, appendedFlag, cleanAffixCount))
         {
             baseCandidate = null;
             kind = AffixMatchKind.None;
             appendedFlag = null;
             affixCount = 0;
+            cleanAffixCount = 0;
             return false;
         }
 
         return true;
     }
 
-    private bool TryFindAffixBaseCore(string word, bool allowBaseOnlyInCompound, out string? baseCandidate, out AffixMatchKind kind, out string? appendedFlag, out int affixCount, int depth)
+    private bool TryFindAffixBaseCore(string word, bool allowBaseOnlyInCompound, out string? baseCandidate, out AffixMatchKind kind, out string? appendedFlag, out int affixCount, out int cleanAffixCount, int depth)
     {
         baseCandidate = null;
         kind = AffixMatchKind.None;
         appendedFlag = null;
         affixCount = 0;
+        cleanAffixCount = 0;
 
         // Helper to join appended flags safely
         static string ConcatFlags(string? a, string? b)
             => (a ?? string.Empty) + (b ?? string.Empty);
+
+        int IsClean(string? appended) => (string.IsNullOrEmpty(_needAffixFlag) || !_hashManager.VariantContainsFlagAfterAppend(string.Empty, appended, _needAffixFlag)) ? 1 : 0;
 
         // Normalize common apostrophe-like characters so affix matching treats
         // ’ (U+2019) and similar characters as equivalent to ASCII apostrophe.
@@ -3758,7 +3801,6 @@ internal sealed class AffixManager : IDisposable
         // 1) Try suffix-first: word = base + suffix
             foreach (var sfx in _suffixes)
         {
-            if (string.IsNullOrEmpty(sfx.Affix)) continue;
             // Allow affix matching to succeed regardless of case. Hunspell
             // treats affix matching in a case-insensitive manner for suffixes
             // like "'s" so we must accept "'S" as well.
@@ -3814,6 +3856,7 @@ internal sealed class AffixManager : IDisposable
                     kind = AffixMatchKind.SuffixOnly;
                     appendedFlag = sfx.AppendedFlag;
                     affixCount = 1;
+                    cleanAffixCount = IsClean(sfx.AppendedFlag);
                     return true;
                 }
             }
@@ -3896,6 +3939,7 @@ internal sealed class AffixManager : IDisposable
                         kind = AffixMatchKind.SuffixOnly;
                         appendedFlag = sfx.AppendedFlag;
                         affixCount = 1;
+                        cleanAffixCount = IsClean(sfx.AppendedFlag);
                         return true;
                     }
                 }
@@ -3905,6 +3949,7 @@ internal sealed class AffixManager : IDisposable
                     kind = AffixMatchKind.SuffixOnly;
                     appendedFlag = sfx.AppendedFlag;
                     affixCount = 1;
+                    cleanAffixCount = IsClean(sfx.AppendedFlag);
                     return true;
                 }
                 }
@@ -3916,7 +3961,6 @@ internal sealed class AffixManager : IDisposable
             // reconstruct the true dictionary base.
                 foreach (var s2 in _suffixes)
             {
-                if (string.IsNullOrEmpty(s2.Affix)) continue;
                 var base1Norm = NormalizeApostrophes(base1);
                 var s2AffixNorm = NormalizeApostrophes(s2.Affix ?? string.Empty);
                 if (!base1Norm.EndsWith(s2AffixNorm, StringComparison.OrdinalIgnoreCase)) continue;
@@ -3932,19 +3976,35 @@ internal sealed class AffixManager : IDisposable
                 // check whether reconstructedDouble corresponds to a dictionary word
                 if (!_hashManager.HasPhTarget(reconstructedDouble) && _hashManager.Lookup(reconstructedDouble))
                 {
+                    // Validate flags for the inner suffix (s2)
+                    var baseVariants = _hashManager.GetWordFlagVariants(reconstructedDouble).ToList();
+                    if (!VariantsContainFlag(baseVariants, s2.Flag)) continue;
+
+                    // Validate flags for the outer suffix (sfx)
+                    if (!VariantsContainFlagWithAppend(baseVariants, s2.AppendedFlag, sfx.Flag)) continue;
+
                     baseCandidate = reconstructedDouble;
                     kind = AffixMatchKind.SuffixOnly; // effectively two suffixes
                     appendedFlag = ConcatFlags(s2.AppendedFlag, sfx.AppendedFlag);
                     affixCount = 2;
+                    cleanAffixCount = IsClean(s2.AppendedFlag) + IsClean(sfx.AppendedFlag);
                     return true;
                 }
 
                 if (!_hashManager.HasPhTarget(reconstructedDouble) && IsCompoundMadeOfTwoWords(reconstructedDouble, out _, out _))
                 {
+                    // Validate flags for the inner suffix (s2)
+                    var baseVariants = _hashManager.GetWordFlagVariants(reconstructedDouble).ToList();
+                    if (!VariantsContainFlag(baseVariants, s2.Flag)) continue;
+
+                    // Validate flags for the outer suffix (sfx)
+                    if (!VariantsContainFlagWithAppend(baseVariants, s2.AppendedFlag, sfx.Flag)) continue;
+
                     baseCandidate = reconstructedDouble;
                     kind = AffixMatchKind.SuffixOnly;
                     appendedFlag = ConcatFlags(s2.AppendedFlag, sfx.AppendedFlag);
                     affixCount = 2;
+                    cleanAffixCount = IsClean(s2.AppendedFlag) + IsClean(sfx.AppendedFlag);
                     return true;
                 }
 
@@ -3953,13 +4013,14 @@ internal sealed class AffixManager : IDisposable
                 // be an affix-derived form (e.g., prefix + suffix on the underlying
                 // base). Allow one level of recursion to detect deeper chains such as
                 // two suffixes plus a prefix.
-                if (depth < 2 && !_hashManager.HasPhTarget(reconstructedDouble) && TryFindAffixBase(reconstructedDouble, allowBaseOnlyInCompound, out var nestedBaseFromDouble, out var nestedKindFromDouble, out var nestedAppendedFromDouble, out var nestedAffixCountFromDouble, depth + 1))
+                if (depth < 2 && !_hashManager.HasPhTarget(reconstructedDouble) && TryFindAffixBase(reconstructedDouble, allowBaseOnlyInCompound, out var nestedBaseFromDouble, out var nestedKindFromDouble, out var nestedAppendedFromDouble, out var nestedAffixCountFromDouble, out var nestedCleanAffixCountFromDouble, depth + 1))
                 {
                     baseCandidate = nestedBaseFromDouble;
                     kind = AffixMatchKind.SuffixOnly; // still effectively suffix-derived
                     // combine appended flags: nested (inner) appended flags first
                     appendedFlag = ConcatFlags(nestedAppendedFromDouble, ConcatFlags(s2.AppendedFlag, sfx.AppendedFlag));
                     affixCount = Math.Min(2, nestedAffixCountFromDouble + 2);
+                    cleanAffixCount = nestedCleanAffixCountFromDouble + IsClean(s2.AppendedFlag) + IsClean(sfx.AppendedFlag);
                     return true;
                 }
             }
@@ -4004,20 +4065,36 @@ internal sealed class AffixManager : IDisposable
                     }
                     else
                     {
+                        // Validate flags for the prefix (pfx)
+                        // baseVariants is already defined above
+                        if (!VariantsContainFlag(baseVariants, pfx.Flag)) continue;
+
+                        // Validate flags for the suffix (sfx)
+                        if (!VariantsContainFlagWithAppend(baseVariants, pfx.AppendedFlag, sfx.Flag)) continue;
+
                         baseCandidate = nestedCandidate;
                         kind = AffixMatchKind.SuffixThenPrefix;
                         appendedFlag = ConcatFlags(sfx.AppendedFlag, pfx.AppendedFlag);
                         affixCount = 2;
+                        cleanAffixCount = IsClean(sfx.AppendedFlag) + IsClean(pfx.AppendedFlag);
                         return true;
                     }
                 }
 
                     if (!_hashManager.HasPhTarget(nestedCandidate) && IsCompoundMadeOfTwoWords(nestedCandidate, out _, out _))
                 {
+                        // Validate flags for the prefix (pfx)
+                        var baseVariants = _hashManager.GetWordFlagVariants(nestedCandidate).ToList();
+                        if (!VariantsContainFlag(baseVariants, pfx.Flag)) continue;
+
+                        // Validate flags for the suffix (sfx)
+                        if (!VariantsContainFlagWithAppend(baseVariants, pfx.AppendedFlag, sfx.Flag)) continue;
+
                         baseCandidate = nestedCandidate;
                         kind = AffixMatchKind.SuffixThenPrefix;
                         appendedFlag = ConcatFlags(sfx.AppendedFlag, pfx.AppendedFlag);
                         affixCount = 2;
+                        cleanAffixCount = IsClean(sfx.AppendedFlag) + IsClean(pfx.AppendedFlag);
                         return true;
                 }
 
@@ -4025,12 +4102,21 @@ internal sealed class AffixManager : IDisposable
                 // be affix-derived (for example: base + suffix -> foos -> prefix applied
                 // yields unfoos). Use a limited recursive search to find the true
                 // dictionary base that generates nestedCandidate.
-                if (depth < 2 && !_hashManager.HasPhTarget(nestedCandidate) && TryFindAffixBase(nestedCandidate, allowBaseOnlyInCompound, out var nestedBase, out var nestedKind, out var nestedAppended, out var nestedAffixCount, depth + 1))
+                if (depth < 2 && !_hashManager.HasPhTarget(nestedCandidate) && TryFindAffixBase(nestedCandidate, allowBaseOnlyInCompound, out var nestedBase, out var nestedKind, out var nestedAppended, out var nestedAffixCount, out var nestedCleanAffixCount, depth + 1))
                 {
+                    // Validate flags for the prefix (pfx)
+                    var baseVariants = _hashManager.GetWordFlagVariants(nestedBase).ToList();
+                    if (!VariantsContainFlagWithAppend(baseVariants, nestedAppended, pfx.Flag)) continue;
+
+                    // Validate flags for the suffix (sfx)
+                    var combinedAppended = ConcatFlags(nestedAppended, pfx.AppendedFlag);
+                    if (!VariantsContainFlagWithAppend(baseVariants, combinedAppended, sfx.Flag)) continue;
+
                     baseCandidate = nestedBase;
                     kind = AffixMatchKind.SuffixThenPrefix;
                     appendedFlag = ConcatFlags(sfx.AppendedFlag, ConcatFlags(nestedAppended, pfx.AppendedFlag));
                     affixCount = Math.Min(2, nestedAffixCount + 2);
+                    cleanAffixCount = nestedCleanAffixCount + IsClean(sfx.AppendedFlag) + IsClean(pfx.AppendedFlag);
                     return true;
                 }
             }
@@ -4039,7 +4125,6 @@ internal sealed class AffixManager : IDisposable
         // 2) Try prefix-first: word = prefix + base
         foreach (var pfx in _prefixes)
         {
-            if (string.IsNullOrEmpty(pfx.Affix)) continue;
             var pfxAffixNorm = NormalizeApostrophes(pfx.Affix ?? string.Empty);
             if (!normalizedWord.StartsWith(pfxAffixNorm, StringComparison.OrdinalIgnoreCase)) continue;
 
@@ -4084,16 +4169,22 @@ internal sealed class AffixManager : IDisposable
                     kind = AffixMatchKind.PrefixOnly;
                     appendedFlag = pfx.AppendedFlag;
                     affixCount = 1;
+                    cleanAffixCount = IsClean(pfx.AppendedFlag);
                     return true;
                 }
             }
 
             if (!_hashManager.HasPhTarget(baseCandidateFromPrefix) && IsCompoundMadeOfTwoWords(baseCandidateFromPrefix, out _, out _))
             {
+                // Validate flags for the prefix (pfx)
+                var baseVariants = _hashManager.GetWordFlagVariants(baseCandidateFromPrefix).ToList();
+                if (!VariantsContainFlag(baseVariants, pfx.Flag)) continue;
+
                 baseCandidate = baseCandidateFromPrefix;
                 kind = AffixMatchKind.PrefixOnly;
                 appendedFlag = pfx.AppendedFlag;
                 affixCount = 1;
+                cleanAffixCount = IsClean(pfx.AppendedFlag);
                 return true;
             }
 
@@ -4148,6 +4239,7 @@ internal sealed class AffixManager : IDisposable
                             kind = AffixMatchKind.PrefixOnly;
                             appendedFlag = ConcatFlags(inner.AppendedFlag, pfx.AppendedFlag);
                             affixCount = 2;
+                            cleanAffixCount = IsClean(inner.AppendedFlag) + IsClean(pfx.AppendedFlag);
                             return true;
                         }
                     }
@@ -4158,6 +4250,7 @@ internal sealed class AffixManager : IDisposable
                         kind = AffixMatchKind.PrefixOnly;
                         appendedFlag = ConcatFlags(inner.AppendedFlag, pfx.AppendedFlag);
                         affixCount = 2;
+                        cleanAffixCount = IsClean(inner.AppendedFlag) + IsClean(pfx.AppendedFlag);
                         return true;
                     }
                 }
@@ -4166,7 +4259,6 @@ internal sealed class AffixManager : IDisposable
             // try suffix on remainder
             foreach (var sfx in _suffixes)
             {
-                if (string.IsNullOrEmpty(sfx.Affix)) continue;
                 var remNorm = NormalizeApostrophes(rem);
                 var sfxAffixNorm2 = NormalizeApostrophes(sfx.Affix ?? string.Empty);
                 if (!remNorm.EndsWith(sfxAffixNorm2, StringComparison.OrdinalIgnoreCase)) continue;
@@ -4204,6 +4296,7 @@ internal sealed class AffixManager : IDisposable
                         kind = AffixMatchKind.PrefixThenSuffix;
                         appendedFlag = ConcatFlags(pfx.AppendedFlag, sfx.AppendedFlag);
                         affixCount = 2;
+                        cleanAffixCount = IsClean(pfx.AppendedFlag) + IsClean(sfx.AppendedFlag);
                         return true;
                     }
                 }
@@ -4214,18 +4307,20 @@ internal sealed class AffixManager : IDisposable
                     kind = AffixMatchKind.PrefixThenSuffix;
                     appendedFlag = ConcatFlags(pfx.AppendedFlag, sfx.AppendedFlag);
                     affixCount = 2;
+                    cleanAffixCount = IsClean(pfx.AppendedFlag) + IsClean(sfx.AppendedFlag);
                     return true;
                 }
 
                 // baseCandidate2 may itself be an affix-derived form (e.g., foos)
                 // which we should resolve recursively. This supports combinations
                 // like prefix + two suffixes.
-                if (depth < 2 && !_hashManager.HasPhTarget(baseCandidate2) && TryFindAffixBase(baseCandidate2, allowBaseOnlyInCompound, out var nestedBaseFromRem, out var nestedKindFromRem, out var nestedAppendedFromRem, out var nestedAffixCountFromRem, depth + 1))
+                if (depth < 2 && !_hashManager.HasPhTarget(baseCandidate2) && TryFindAffixBase(baseCandidate2, allowBaseOnlyInCompound, out var nestedBaseFromRem, out var nestedKindFromRem, out var nestedAppendedFromRem, out var nestedAffixCountFromRem, out var nestedCleanAffixCountFromRem, depth + 1))
                 {
                     baseCandidate = nestedBaseFromRem;
                     kind = AffixMatchKind.PrefixThenSuffix;
                     appendedFlag = ConcatFlags(pfx.AppendedFlag, ConcatFlags(nestedAppendedFromRem, sfx.AppendedFlag));
                     affixCount = Math.Min(2, nestedAffixCountFromRem + 2);
+                    cleanAffixCount = nestedCleanAffixCountFromRem + IsClean(pfx.AppendedFlag) + IsClean(sfx.AppendedFlag);
                     return true;
                 }
             }
@@ -4252,7 +4347,7 @@ internal sealed class AffixManager : IDisposable
         return usedPrefix && usedSuffix;
     }
 
-    private bool SatisfiesNeedAffixRequirement(string? baseCandidate, int affixCount, string? appendedFlag)
+    private bool SatisfiesNeedAffixRequirement(string? baseCandidate, int affixCount, string? appendedFlag, int cleanAffixCount)
     {
         if (_needAffixFlag is null || string.IsNullOrEmpty(appendedFlag))
         {
@@ -4277,7 +4372,7 @@ internal sealed class AffixManager : IDisposable
             }
         }
 
-        return affixCount >= 2;
+        return cleanAffixCount >= 1;
     }
 
     /// <summary>

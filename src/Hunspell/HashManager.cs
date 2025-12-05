@@ -91,7 +91,6 @@ internal sealed class HashManager : IDisposable
         using (var stream = File.OpenRead(dictionaryPath))
         using (var reader = new StreamReader(stream, triedEncodings[0], detectEncodingFromByteOrderMarks: true))
         {
-            Console.WriteLine("HashManager: reading dictionary using encoding=" + triedEncodings[0].WebName);
             fileContent = reader.ReadToEnd();
         }
 

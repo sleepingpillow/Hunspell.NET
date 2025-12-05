@@ -1,6 +1,8 @@
 using System.IO;
 using System.Linq;
 using System.Collections.Generic;
+using System.Text;
+using Hunspell;
 using Xunit;
 
 namespace Hunspell.Tests;
@@ -35,10 +37,11 @@ public class UpstreamAffixAndCompoundTests
         return Path.Combine("..", "..", "..", "dictionaries", baseName, fileName + ext);
     }
 
-    private static IEnumerable<string> ReadList(string path)
+    private static IEnumerable<string> ReadList(string path, Encoding? encoding = null)
     {
         if (!File.Exists(path)) yield break;
-        foreach (var line in File.ReadAllLines(path))
+        var enc = encoding ?? Encoding.UTF8;
+        foreach (var line in File.ReadAllLines(path, enc))
         {
             var t = line.Trim();
             if (string.IsNullOrEmpty(t)) continue;
@@ -209,10 +212,28 @@ public class UpstreamAffixAndCompoundTests
         // if both aff and dic missing, skip
         if (!File.Exists(dic) && !File.Exists(aff)) return;
 
+        Encoding encoding = Encoding.UTF8;
+        try
+        {
+            var encName = AffixManager.ReadDeclaredEncodingFromAffix(aff);
+            if (!string.IsNullOrEmpty(encName))
+            {
+                 if (encName.StartsWith("ISO", StringComparison.OrdinalIgnoreCase) && 
+                     encName.Length > 3 && char.IsDigit(encName[3]))
+                 {
+                     encName = "ISO-" + encName.Substring(3);
+                 }
+                 encName = encName.Replace('_', '-');
+                 System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
+                 encoding = Encoding.GetEncoding(encName);
+            }
+        }
+        catch {}
+
         using var sp = new HunspellSpellChecker(aff, dic);
 
         var good = D(baseName, ".good");
-        foreach (var w in ReadList(good))
+        foreach (var w in ReadList(good, encoding))
         {
             Assert.True(sp.Spell(w), $"Expected '{w}' from {baseName}.good to be accepted");
         }

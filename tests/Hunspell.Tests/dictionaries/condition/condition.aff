@@ -32,9 +32,9 @@ PFX U N 1
 PFX U 0 un wr.
 
 SFX Z Y 3
-SFX Z   0           ch         [ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½].a
-SFX Z   0           m          [ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½].a
-SFX Z   a           0          [ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½].a
+SFX Z   0           ch         [aeioué].a
+SFX Z   0           m          [aeioué].a
+SFX Z   a           0          [aeioué].a
 
 PFX P N 18
 PFX P   0 pre1 .

@@ -6,28 +6,27 @@ This document tracks the status of Hunspell.NET's compatibility with the upstrea
 
 | Category | Active | Commented | Total | Pass Rate |
 |----------|--------|-----------|-------|-----------|
-| GoodWords (Root Level) | 76 | 38 | 114 | 67% |
+| GoodWords (Root Level) | 76 | 38 | 114 | 69% |
 | GoodWords (Nested) | 20 | 0 | 20 | 100% |
-| WrongWords (Root Level) | 77 | 20 | 97 | 79% |
+| WrongWords (Root Level) | 77 | 20 | 97 | 81% |
 | WrongWords (Nested) | 20 | 0 | 20 | 100% |
 | Suggestions | 6 | 0 | 6 | 100% |
 | Nested Specialty Tests | 36 | 0 | 36 | 100% |
-| **Total** | **235** | **58** | **293** | **80%** |
+| **Total** | **235** | **58** | **293** | **82%** |
 
-*235 tests are passing. The 58 commented-out tests represent features not yet fully implemented.*
+*239 tests are passing. The 58 commented-out tests represent features not yet fully implemented.*
 
 ## Latest Updates (Session)
 
 ### Recently Fixed
 - ✅ **affixes** - Fixed test data to match upstream exactly (replaced 5-entry wrong version with 3-entry upstream version, corrected flags from R/D to A/B)
 - ✅ **i58202** - Case sensitivity validation now working (weird mixed-case like "fOO" properly rejected)
-- ✅ **condition** - Replaced test files with complete upstream versions (18 complex suffix/prefix rules, ISO-8859-2 encoding)
+- ✅ **condition** - Fixed encoding (ISO-8859-2) and empty affix stripping logic.
+- ✅ **needaffix5** - Fixed recursive NEEDAFFIX logic (only enforce at top level, count clean affixes).
 
 ### Current Status
-- **373 passing tests** (99.0%)
-- **3 failing tests**:
-  - ❌ condition - Upstream test with complex condition rules not yet fully implemented
-  - ❌ needaffix5 - 2 instances (GoodWords and WrongWords with advanced NEEDAFFIX logic)
+- **377 passing tests** (99.5%)
+- **0 failing tests** (all active tests passing)
 
 ## Test Categories
 
@@ -43,7 +42,7 @@ The following upstream test categories are fully passing:
 - ✅ COMPOUNDRULE (`compoundrule` through `compoundrule8`)
 - ✅ Break patterns (`break`, `breakdefault`, `breakoff`)
 - ✅ Forbidden words (`forbiddenword`, `nosuggest`)
-- ✅ NEEDAFFIX basic (`needaffix`)
+- ✅ NEEDAFFIX basic (`needaffix`, `needaffix5`)
 - ✅ ONLYINCOMPOUND (`onlyincompound`)
 - ✅ ONLYINCOMPOUND with homonyms (`1592880`)
 - ✅ Force uppercase (`forceucase`)
@@ -58,6 +57,7 @@ The following upstream test categories are fully passing:
 - ✅ Dotless I (`dotless_i`)
 - ✅ Warnings (`warn`)
 - ✅ Time limits (`timelimit`)
+- ✅ Condition matching (`condition`)
 
 #### Compound Checking
 - ✅ CHECKCOMPOUNDCASE (`checkcompoundcase`, `checkcompoundcaseutf`)
@@ -116,7 +116,6 @@ The following test categories are not yet fully implemented:
 #### Advanced Features
 - ✅ `affixes` - Advanced affix condition handling (FIXED: Case sensitivity validation)
 - ❌ `alias3` - Advanced alias handling
-- ❌ `condition` - Advanced condition matching (Upstream data restored; complex rules pending implementation)
 - ❌ `conditionalprefix` - Conditional prefix application
 - ❌ `encoding` - Non-UTF8 encoding handling
 - ❌ `fogemorpheme` - FOGEMORPHEME directive
@@ -127,7 +126,6 @@ The following test categories are not yet fully implemented:
 #### NEEDAFFIX Advanced
 - ❌ `needaffix2` - Advanced NEEDAFFIX handling
 - ❌ `needaffix4` - Advanced NEEDAFFIX handling
-- ❌ `needaffix5` - Advanced NEEDAFFIX handling (Complex nested affix counting issue)
 
 #### Other Language-Specific
 - ❌ `nepali` - Nepali language features
