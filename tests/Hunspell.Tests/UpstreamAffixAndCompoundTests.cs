@@ -168,7 +168,7 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("flagutf8")]
     //
     // German compounding:
-    // [InlineData("germancompounding")]     // FAILING: German compounding rules
+    [InlineData("germancompounding")]     // FAILING: German compounding rules
     // [InlineData("germancompoundingold")]  // FAILING: Old German compounding rules
     //
     // Hungarian-specific tests:
@@ -647,8 +647,8 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("fogemorpheme")]  // FAILING: FOGEMORPHEME not implemented
     //
     // German compounding:
-    // [InlineData("germancompounding")]     // FAILING: German compound restrictions
-    // [InlineData("germancompoundingold")]  // FAILING: Old German compound restrictions
+    [InlineData("germancompounding")]     // FAILING: German compound restrictions
+    [InlineData("germancompoundingold")]  // FAILING: Old German compound restrictions
     //
     // Hungarian-specific:
     // [InlineData("hu")]  // FAILING: Hungarian restrictions
@@ -688,6 +688,189 @@ public class UpstreamAffixAndCompoundTests
         {
                 Assert.False(sp.Spell(w), $"Expected '{w}' from {baseName}.wrong to be rejected");
         }
+    }
+
+
+    [Theory]
+    [InlineData("Computer")]
+    [InlineData("Computern")]
+    [InlineData("Arbeit")]
+    [InlineData("Arbeits-")]
+    [InlineData("Computerarbeit")]
+    [InlineData("Computerarbeits-")]
+    [InlineData("Arbeitscomputer")]
+    [InlineData("Computercomputer")]
+    [InlineData("Computercomputern")]
+    [InlineData("Arbeitscomputern")]
+    [InlineData("Computerarbeitscomputer")]
+    [InlineData("Computerarbeitscomputern")]
+    [InlineData("Arbeitscomputercomputer")]
+    [InlineData("Computercomputerarbeit")]
+    [InlineData("Arbeitscomputerarbeit")]
+    [InlineData("Arbeitsarbeitsarbeit")]
+    [InlineData("Computerarbeitsarbeit")]
+    [InlineData("Computerarbeits-Computer")]
+    [InlineData("computerarbeits-Computern")]
+    public void GermanCompounding_GoodWords_Targeted(string word)
+    {
+        var aff = D("germancompounding", ".aff");
+        var dic = D("germancompounding", ".dic");
+
+        if (!File.Exists(dic) && !File.Exists(aff)) return;
+
+        using var sp = new HunspellSpellChecker(aff, dic);
+
+        Assert.True(sp.Spell(word), $"Expected '{word}' from germancompounding.good to be accepted");
+    }
+
+
+    [Theory]
+    // Other germancompounding.wrong entries can be re-enabled while iterating:
+    [InlineData("computer")]
+    [InlineData("computern")]
+    [InlineData("arbeit")]
+    [InlineData("Arbeits")]
+    [InlineData("arbeits")]
+    [InlineData("ComputerArbeit")]
+    [InlineData("ComputernArbeit")]
+    [InlineData("Computernarbeit")]
+    [InlineData("ComputerArbeits")]
+    [InlineData("Arbeitcomputer")]
+    [InlineData("Arbeitcomputern")]
+    [InlineData("ArbeitsComputer")]
+    [InlineData("ArbeitsComputern")]
+    [InlineData("Computerarbeitcomputer")]
+    [InlineData("ComputerArbeitcomputer")]
+    [InlineData("ComputerArbeitscomputer")]
+    [InlineData("Computerarbeitcomputern")]
+    [InlineData("ComputerArbeitcomputern")]
+    [InlineData("ComputerArbeitscomputern")]
+    [InlineData("Arbeitscomputerarbeits")]
+    [InlineData("Arbeitscomputernarbeits")]
+    [InlineData("Computerarbeits-computer")]
+    [InlineData("Arbeitsnehmer")]
+    [InlineData("computers")]
+    [InlineData("computernarbeit")]
+    [InlineData("computerArbeit")]
+    [InlineData("computerArbeits")]
+    [InlineData("arbeitcomputer")]
+    [InlineData("arbeitsComputer")]
+    [InlineData("computerarbeitcomputer")]
+    [InlineData("computerArbeitcomputer")]
+    [InlineData("computerArbeitscomputer")]
+    [InlineData("arbeitscomputerarbeits")]
+    [InlineData("computerarbeits-computer")]
+    [InlineData("arbeitsnehmer")]
+    [InlineData("arbeits-")]
+    [InlineData("computerarbeit")]
+    [InlineData("computerarbeits-")]
+    [InlineData("arbeitscomputer")]
+    [InlineData("arbeitscomputern")]
+    [InlineData("computerarbeitscomputer")]
+    [InlineData("computerarbeitscomputern")]
+    [InlineData("computerarbeitscomputers")]
+    [InlineData("arbeitscomputerarbeit")]
+    [InlineData("computerarbeits-Computer")]
+    [InlineData("computerarbeits-Computern")]
+    public void GermanCompounding_WrongWords_Targeted(string word)
+    {
+        var aff = D("germancompounding", ".aff");
+        var dic = D("germancompounding", ".dic");
+
+        if (!File.Exists(dic) && !File.Exists(aff)) return;
+
+        using var sp = new HunspellSpellChecker(aff, dic);
+
+        Assert.False(sp.Spell(word), $"Expected '{word}' from germancompounding.wrong to be rejected");
+    }
+
+
+    [Theory]
+    [InlineData("Computer")]
+    [InlineData("Computern")]
+    [InlineData("Arbeit")]
+    [InlineData("Arbeits-")]
+    [InlineData("Computerarbeit")]
+    [InlineData("Computerarbeits-")]
+    [InlineData("Arbeitscomputer")]
+    [InlineData("Arbeitscomputern")]
+    [InlineData("Computerarbeitscomputer")]
+    [InlineData("Computerarbeitscomputern")]
+    [InlineData("Arbeitscomputerarbeit")]
+    [InlineData("Computerarbeits-Computer")]
+    [InlineData("Computerarbeits-Computern")]
+    [InlineData("Computer-Arbeit")]
+    public void GermanCompoundingOld_GoodWords_Targeted(string word)
+    {
+        var aff = D("germancompoundingold", ".aff");
+        var dic = D("germancompoundingold", ".dic");
+
+        if (!File.Exists(dic) && !File.Exists(aff)) return;
+
+        using var sp = new HunspellSpellChecker(aff, dic);
+
+        Assert.True(sp.Spell(word), $"Expected '{word}' from germancompoundingold.good to be accepted");
+    }
+
+
+    [Theory]
+    [InlineData("computer")]
+    [InlineData("computern")]
+    [InlineData("arbeit")]
+    [InlineData("Arbeits")]
+    [InlineData("arbeits")]
+    [InlineData("ComputerArbeit")]
+    [InlineData("ComputernArbeit")]
+    [InlineData("Computernarbeit")]
+    [InlineData("ComputerArbeits")]
+    [InlineData("Arbeitcomputer")]
+    [InlineData("Arbeitcomputern")]
+    [InlineData("ArbeitsComputer")]
+    [InlineData("ArbeitsComputern")]
+    [InlineData("Computerarbeitcomputer")]
+    [InlineData("ComputerArbeitcomputer")]
+    [InlineData("ComputerArbeitscomputer")]
+    [InlineData("Computerarbeitcomputern")]
+    [InlineData("ComputerArbeitcomputern")]
+    [InlineData("ComputerArbeitscomputern")]
+    [InlineData("Arbeitscomputerarbeits")]
+    [InlineData("Arbeitscomputernarbeits")]
+    [InlineData("Computerarbeits-computer")]
+    [InlineData("Arbeitsnehmer")]
+    [InlineData("computers")]
+    [InlineData("computernarbeit")]
+    [InlineData("computernArbeit")]
+    [InlineData("computerArbeit")]
+    [InlineData("computerArbeits")]
+    [InlineData("arbeitcomputer")]
+    [InlineData("arbeitsComputer")]
+    [InlineData("computerarbeitcomputer")]
+    [InlineData("computerArbeitcomputer")]
+    [InlineData("computerArbeitscomputer")]
+    [InlineData("arbeitscomputerarbeits")]
+    [InlineData("computerarbeits-computer")]
+    [InlineData("arbeitsnehmer")]
+    [InlineData("arbeits-")]
+    [InlineData("computerarbeit")]
+    [InlineData("computerarbeits-")]
+    [InlineData("arbeitscomputer")]
+    [InlineData("arbeitscomputern")]
+    [InlineData("computerarbeitscomputer")]
+    [InlineData("computerarbeitscomputern")]
+    [InlineData("computerarbeitscomputers")]
+    [InlineData("arbeitscomputerarbeit")]
+    [InlineData("computerarbeits-Computer")]
+    [InlineData("computerarbeits-Computern")]
+    public void GermanCompoundingOld_WrongWords_Targeted(string word)
+    {
+        var aff = D("germancompoundingold", ".aff");
+        var dic = D("germancompoundingold", ".dic");
+
+        if (!File.Exists(dic) && !File.Exists(aff)) return;
+
+        using var sp = new HunspellSpellChecker(aff, dic);
+
+        Assert.False(sp.Spell(word), $"Expected '{word}' from germancompoundingold.wrong to be rejected");
     }
 
 

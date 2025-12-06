@@ -3,6 +3,8 @@
 // Licensed under MPL 1.1/GPL 2.0/LGPL 2.1
 // Based on Hunspell by László Németh and contributors
 
+using System.Globalization;
+
 namespace Hunspell;
 
 /// <summary>
@@ -117,11 +119,18 @@ public sealed class HunspellSpellChecker : IDisposable
                 {
                     return false;
                 }
+                // Reject affix-derived forms that are allowed only inside
+                // compounds due to appended ONLYINCOMPOUND flags.
+                if (_affixManager?.IsAffixDerivedOnlyInCompound(w) ?? false)
+                {
+                    return false;
+                }
                 // Accept affixed-derived forms only when they're not forbidden by flags
                 if (_affixManager?.IsForbiddenWord(w) ?? false)
                 {
                     return false;
                 }
+
                 return true;
             }
 
@@ -250,8 +259,22 @@ public sealed class HunspellSpellChecker : IDisposable
 
         var suggestions = new List<string>();
 
-        // If the word is correctly spelled, no suggestions needed
-        if (Spell(word))
+        // If the word is correctly spelled, no suggestions needed. For very large
+        // dictionaries, avoid expensive compound/affix recursion in Spell by
+        // first doing a fast lookup and skipping the full Spell when the dict is
+        // extremely large; this prevents pathological hangs in suggestion paths
+        // (e.g., Swedish sv_FI full wordlist).
+        bool isCorrect;
+        if (_hashManager is not null && _hashManager.WordCount > 100_000)
+        {
+            isCorrect = _hashManager.Lookup(word);
+        }
+        else
+        {
+            isCorrect = Spell(word);
+        }
+
+        if (isCorrect)
         {
             return suggestions;
         }

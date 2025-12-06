@@ -456,6 +456,124 @@ internal sealed class HashManager : IDisposable
         return hasUpper && !hasOther;
     }
 
+    public bool IsInitCapOnlyEntry(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        if (!_words.TryGetValue(word, out var entries))
+        {
+            return false;
+        }
+
+        bool hasInitCap = false;
+        bool hasLower = false;
+        bool hasAllUpper = false;
+        bool hasOther = false;
+
+        static bool TryClassify(string surface, out bool isAllUpper, out bool isInitCap, out bool isAllLower)
+        {
+            isAllUpper = false;
+            isInitCap = false;
+            isAllLower = false;
+
+            bool seenLetter = false;
+            bool firstUpper = false;
+            bool restLower = true;
+            bool allUpper = true;
+            bool anyLower = false;
+
+            for (int i = 0; i < surface.Length; i++)
+            {
+                var ch = surface[i];
+                if (!char.IsLetter(ch))
+                {
+                    continue;
+                }
+
+                if (!seenLetter)
+                {
+                    seenLetter = true;
+                    firstUpper = char.IsUpper(ch);
+                    allUpper = firstUpper;
+                    anyLower = !firstUpper;
+                    continue;
+                }
+
+                if (!char.IsLower(ch))
+                {
+                    restLower = false;
+                }
+                else
+                {
+                    anyLower = true;
+                }
+
+                if (!char.IsUpper(ch))
+                {
+                    allUpper = false;
+                }
+            }
+
+            if (!seenLetter)
+            {
+                return false;
+            }
+
+            isAllUpper = allUpper;
+            isInitCap = firstUpper && restLower;
+            isAllLower = anyLower && !firstUpper && restLower;
+            return true;
+        }
+
+        foreach (var entry in entries)
+        {
+            var surface = entry.Word ?? string.Empty;
+            if (!TryClassify(surface, out var allUpper, out var initCap, out var allLower))
+            {
+                continue;
+            }
+
+            if (allUpper)
+            {
+                hasAllUpper = true;
+            }
+            else if (allLower)
+            {
+                hasLower = true;
+            }
+            else if (initCap)
+            {
+                hasInitCap = true;
+            }
+            else
+            {
+                hasOther = true;
+            }
+
+            if ((hasLower || hasAllUpper || hasOther) && hasInitCap)
+            {
+                return false;
+            }
+        }
+
+        return hasInitCap && !hasLower && !hasAllUpper && !hasOther;
+    }
+
+    public bool IsInitCapOnlyEntryInsensitive(string word)
+    {
+        if (IsInitCapOnlyEntry(word)) return true;
+
+        if (!string.IsNullOrEmpty(word))
+        {
+            var title = char.ToUpperInvariant(word[0]) + word.Substring(1).ToLowerInvariant();
+            if (!string.Equals(title, word, StringComparison.Ordinal) && IsInitCapOnlyEntry(title))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public bool Add(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -466,6 +584,15 @@ internal sealed class HashManager : IDisposable
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         return _runtimeWords.Remove(word);
+    }
+
+    public int WordCount
+    {
+        get
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            return _words.Count + _runtimeWords.Count;
+        }
     }
 
     public IEnumerable<string> GetAllWords()

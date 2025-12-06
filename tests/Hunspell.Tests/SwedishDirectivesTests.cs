@@ -146,10 +146,21 @@ public class SwedishDirectivesTests
         Assert.True(spellChecker.Spell("koja"));
         // Note: Compound generation may not be fully implemented, so test basic loading
 
-        // Test suggestions for potential compounds
+    }
+
+    [Fact]
+    public void SvFi_suggestCompondWord()
+    {
+        // Arrange
+        using var spellChecker = new HunspellSpellChecker(
+            "../../../dictionaries/swedish/sv_FI.aff",
+            "../../../dictionaries/swedish/sv_FI.dic");
+        // Act & Assert - Test suggestions for potential compounds
         var suggestions = spellChecker.Suggest("hundkojs");
         Assert.NotNull(suggestions);
-        // May or may not contain compound suggestions
+        Assert.Contains("hundkoja", suggestions);
+        // Test suggestions for potential compounds
+        Assert.NotNull(suggestions);
     }
 
     [Fact]
@@ -197,11 +208,21 @@ public class SwedishDirectivesTests
         // Act & Assert - Test compound words (MAXCPDSUGS = 0, so fewer suggestions)
         Assert.True(spellChecker.Spell("hund"));
         Assert.True(spellChecker.Spell("koja"));
+    }
 
-        // Test suggestions - should have fewer compound suggestions than sv_FI
+    [Fact]
+    public void SvSe_suggestCompondWord()
+    {
+        // Arrange
+        using var spellChecker = new HunspellSpellChecker(
+            "../../../dictionaries/swedish/sv_SE.aff",
+            "../../../dictionaries/swedish/sv_SE.dic");
+        // Act & Assert - Test suggestions for potential compounds
         var suggestions = spellChecker.Suggest("hundkojs");
         Assert.NotNull(suggestions);
-        // Due to MAXCPDSUGS=0, may have fewer suggestions
+        Assert.Contains("hundkoja", suggestions);
+        // Test suggestions for potential compounds
+        Assert.NotNull(suggestions);
     }
 
     [Fact]
