@@ -22,6 +22,7 @@ namespace Hunspell;
 internal sealed class AffixManager : IDisposable
 {
     private readonly HashManager _hashManager;
+    private readonly SuggestManager _suggestManager;
     private readonly Dictionary<string, string> _options = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<AffixRule> _prefixes = new();
     private readonly List<AffixRule> _suffixes = new();
@@ -72,6 +73,15 @@ internal sealed class AffixManager : IDisposable
     private bool _onlyMaxDiff = false;
     private bool _noSplitSuggestions = false;
     private bool _fullStrip = false;
+
+    // Suggestion state exposed for SuggestManager
+    internal string TryCharacters => _options.TryGetValue("TRY", out var chars) ? chars : DefaultTryCharacters;
+    internal List<(string from, string to)> RepTable => _repTable;
+    internal List<(string from, string to)> IconvTable => _iconvTable;
+    internal bool NoSplitSuggestions => _noSplitSuggestions;
+    internal bool FullStrip => _fullStrip;
+    internal bool OnlyMaxDiff => _onlyMaxDiff;
+    internal int MaxDiff => _maxDiff;
 
     // Flag alias table (AF) support
     private readonly List<string> _flagAliasTable = new() { string.Empty };
@@ -282,6 +292,8 @@ internal sealed class AffixManager : IDisposable
         _hashManager = hashManager ?? throw new ArgumentNullException(nameof(hashManager));
 
         LoadAffix(affixPath);
+
+        _suggestManager = new SuggestManager(_hashManager, this);
     }
 
     /// <summary>
@@ -594,7 +606,7 @@ internal sealed class AffixManager : IDisposable
                     }
                     catch
                     {
-                        // ignore malformed values — default Single is OK
+                        // ignore malformed values ÔÇö default Single is OK
                     }
                 }
                 break;
@@ -1026,53 +1038,7 @@ internal sealed class AffixManager : IDisposable
     public void GenerateSuggestions(string word, List<string> suggestions)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-
-        // Try simple character substitutions
-        GenerateSubstitutionSuggestions(word, suggestions);
-
-        // Try character insertions
-        GenerateInsertionSuggestions(word, suggestions);
-
-        // Try character deletions
-        GenerateDeletionSuggestions(word, suggestions);
-
-        // Try character swaps
-        GenerateSwapSuggestions(word, suggestions);
-
-        // Try REP table based replacements (common misspelling mappings)
-        GenerateRepSuggestions(word, suggestions);
-
-        // Try splitting the input to multi-word suggestions (e.g. 'alot' -> 'a lot')
-        if (!_noSplitSuggestions)
-        {
-            GenerateSplitSuggestions(word, suggestions);
-        }
-
-        // Try possessive handling (e.g. 'autos' -> "auto's")
-        GeneratePossessiveSuggestions(word, suggestions);
-
-        // If we didn't find much with single-edit, try two-edit candidates
-        if (suggestions.Count < 10)
-        {
-            GenerateTwoEditSuggestions(word, suggestions);
-        }
-
-        // If ONLYMAXDIFF was set in the affix file, filter all generated
-        // suggestions to those within the configured max distance. This keeps
-        // the behavior consistent with upstream Hunspell when ONLYMAXDIFF is
-        // present — it restricts suggestions to a bounded distance.
-        if (_onlyMaxDiff && _maxDiff > 0)
-        {
-            var filter = suggestions.Where(s => BoundedLevenshtein(word, s, _maxDiff) >= 0).ToList();
-            suggestions.Clear();
-            suggestions.AddRange(filter);
-        }
-
-        // Limit suggestions
-        if (suggestions.Count > 10)
-        {
-            suggestions.RemoveRange(10, suggestions.Count - 10);
-        }
+        _suggestManager.GenerateSuggestions(word, suggestions);
     }
 
     /// <summary>
@@ -1085,49 +1051,7 @@ internal sealed class AffixManager : IDisposable
     public IEnumerable<string> GenerateIconvCandidates(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (string.IsNullOrEmpty(word) || _iconvTable.Count == 0) yield break;
-
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var queue = new Queue<string>();
-        queue.Enqueue(word);
-        seen.Add(word);
-
-        const int MaxVariants = 500;
-
-        while (queue.Count > 0 && seen.Count < MaxVariants)
-        {
-            var current = queue.Dequeue();
-            foreach (var (from, to) in _iconvTable)
-            {
-                if (string.IsNullOrEmpty(from)) continue;
-                int idx = current.IndexOf(from, StringComparison.Ordinal);
-                if (idx < 0) continue;
-
-                // Global replace (every occurrence)
-                var global = current.Replace(from, to);
-                if (seen.Add(global))
-                {
-                    queue.Enqueue(global);
-                    yield return global;
-                }
-
-                // Try replacing each occurrence individually to capture partial
-                // conversion sequences (e.g. when only one instance should expand).
-                int pos = 0;
-                while ((pos = current.IndexOf(from, pos, StringComparison.Ordinal)) >= 0)
-                {
-                    var single = current.Substring(0, pos) + to + current.Substring(pos + from.Length);
-                    if (seen.Add(single))
-                    {
-                        queue.Enqueue(single);
-                        yield return single;
-                    }
-                    pos++; // next possible occurrence
-                }
-
-                if (seen.Count >= MaxVariants) yield break;
-            }
-        }
+        return _suggestManager.GenerateIconvCandidates(word);
     }
 
     // Generate candidates that are two edits away (perform another single-edit
@@ -1427,7 +1351,7 @@ internal sealed class AffixManager : IDisposable
                 var candidate = word.Substring(0, start) + to + word.Substring(start + from.Length);
                 // Accept candidate if it's either present in the dictionary or
                 // can be generated by affix rules (CheckAffixedWord), which is
-                // necessary for forms like 'prettiest', 'happiest', 'foobarőt'.
+                // necessary for forms like 'prettiest', 'happiest', 'foobar┼æt'.
                 if ((_hashManager.Lookup(candidate) || CheckAffixedWord(candidate)) && !suggestions.Contains(candidate))
                 {
                     suggestions.Add(candidate);
@@ -1585,7 +1509,7 @@ internal sealed class AffixManager : IDisposable
             }
 
             // Special-case normalized connector insertion: for languages that
-            // combine words without a small connector (e.g., 'vinteún' ->
+            // combine words without a small connector (e.g., 'vinte├║n' ->
             // 'vinte e un' after normalizing diacritics), try to normalize the
             // right side with REP rules and, if left/connector/right are all
             // dictionary entries, suggest the three-word phrase.
@@ -1602,7 +1526,7 @@ internal sealed class AffixManager : IDisposable
                 // If we can normalize the right-hand part into a dictionary word
                 // and the short connector 'e' exists in the dictionary, suggest
                 // left + ' e ' + normalizedRight. This is a targeted heuristic
-                // that covers upstream rep examples like 'vinteún'.
+                // that covers upstream rep examples like 'vinte├║n'.
                 if (!string.Equals(normalizedRight, right, StringComparison.OrdinalIgnoreCase)
                     && _hashManager.Lookup(normalizedRight)
                     && _hashManager.Lookup("e")
@@ -1825,7 +1749,7 @@ internal sealed class AffixManager : IDisposable
             // Additional defensive check: scan any simple two-part split that
             // is considered a valid compound and see whether any component when
             // diacritic-folded or via REP replacement maps to a dictionary word.
-            // This catches cases like Hungarian 'szervízkocsi' where 'szervíz'
+            // This catches cases like Hungarian 'szerv├¡zkocsi' where 'szerv├¡z'
             // -> 'szerviz' should forbid the compound.
             for (int i = _compoundMin; i <= word.Length - _compoundMin; i++)
             {
@@ -1899,7 +1823,7 @@ internal sealed class AffixManager : IDisposable
                 // any valid compound component (including nested multi-component
                 // partitions) would yield a dictionary word. This mirrors upstream
                 // Hunspell behavior where compounds containing a component that
-                // maps to a dictionary word via REP are forbidden (e.g., "szervízkocsi").
+                // maps to a dictionary word via REP are forbidden (e.g., "szerv├¡zkocsi").
                 // We'll enumerate valid partitions of the word into components and
                 // test the affected component.
                 IEnumerable<List<(int start, int end, string part)>> EnumeratePartitions()
@@ -1934,7 +1858,7 @@ internal sealed class AffixManager : IDisposable
                 }
 
                 var partitions = EnumeratePartitions();
-                // partitions enumerated — suppressed debug printing for perf
+                // partitions enumerated ÔÇö suppressed debug printing for perf
                 foreach (var partition in partitions)
                 {
                     foreach (var (start, end, part) in partition)
@@ -1947,8 +1871,8 @@ internal sealed class AffixManager : IDisposable
                             // attempt logging suppressed for perf
                             // Try exact REP replacement
                             if (_hashManager.Lookup(newPart)) return true;
-                            // Fallback: some REP rules simply replace diacritics — try a
-                            // diacritic-folded form of the component (e.g. 'szervíz' -> 'szerviz')
+                            // Fallback: some REP rules simply replace diacritics ÔÇö try a
+                            // diacritic-folded form of the component (e.g. 'szerv├¡z' -> 'szerviz')
                             var folded = RemoveDiacritics(part);
                             if (!string.IsNullOrEmpty(folded) && !string.Equals(folded, part, StringComparison.Ordinal) && _hashManager.Lookup(folded))
                             {
@@ -2315,8 +2239,8 @@ internal sealed class AffixManager : IDisposable
             var s = component.Replace("-", "").Replace(" ", "").ToLowerInvariant();
             if (digitToken == '6')
             {
-                // heuristic: suffix-based numeric-like classes (e.g. år, års, åring, tals)
-                var suffixes = new[] { "år", "års", "åring", "tals", "tal" };
+                // heuristic: suffix-based numeric-like classes (e.g. ├Ñr, ├Ñrs, ├Ñring, tals)
+                var suffixes = new[] { "├Ñr", "├Ñrs", "├Ñring", "tals", "tal" };
                 return suffixes.Any(suf => s.EndsWith(suf));
             }
 
@@ -2356,7 +2280,7 @@ internal sealed class AffixManager : IDisposable
 
         var ordSuffixMap = new Dictionary<string, string>(StringComparer.InvariantCultureIgnoreCase)
         {
-            {"första", "en"}, {"först", "en"}, {"andra", "två"}, {"tredje", "tre"}, {"fjärde", "fyra"}, {"femte", "fem"}, {"sjätte", "sex"}, {"sjunde", "sju"}, {"åttonde", "åtta"}, {"nionde", "nio"}, {"tionde", "tio"},
+            {"f├Ârsta", "en"}, {"f├Ârst", "en"}, {"andra", "tv├Ñ"}, {"tredje", "tre"}, {"fj├ñrde", "fyra"}, {"femte", "fem"}, {"sj├ñtte", "sex"}, {"sjunde", "sju"}, {"├Ñttonde", "├Ñtta"}, {"nionde", "nio"}, {"tionde", "tio"},
             {"hundrade", "hundra"}, {"tusende", "tusen"}
         };
 
@@ -2372,13 +2296,13 @@ internal sealed class AffixManager : IDisposable
         }
 
         var units = new Dictionary<string,int> {
-            {"noll",0},{"en",1},{"ett",1},{"två",2},{"tva",2},{"tre",3},{"fyra",4},{"fem",5},{"sex",6},{"sju",7},{"åtta",8},{"atta",8},{"nio",9}
+            {"noll",0},{"en",1},{"ett",1},{"tv├Ñ",2},{"tva",2},{"tre",3},{"fyra",4},{"fem",5},{"sex",6},{"sju",7},{"├Ñtta",8},{"atta",8},{"nio",9}
         };
         var teens = new Dictionary<string,int> {
             {"tio",10},{"elva",11},{"tolv",12},{"treton",13},{"fjorton",14},{"femton",15},{"sexton",16},{"sjutton",17},{"arton",18},{"nitton",19}
         };
         var tens = new Dictionary<string,int> {
-            {"tjugo",20},{"trettio",30},{"fyrtio",40},{"femtio",50},{"sextio",60},{"sjuttio",70},{"åttio",80},{"attio",80},{"nittio",90}
+            {"tjugo",20},{"trettio",30},{"fyrtio",40},{"femtio",50},{"sextio",60},{"sjuttio",70},{"├Ñttio",80},{"attio",80},{"nittio",90}
         };
 
         var idx = 0;
@@ -2432,9 +2356,9 @@ internal sealed class AffixManager : IDisposable
     private bool IsSpelledNumber(string s)
     {
         if (string.IsNullOrEmpty(s)) return false;
-        var tokens = new[] { "noll", "en", "ett", "två", "tre", "fyra", "fem", "sex", "sju", "åtta", "nio",
+        var tokens = new[] { "noll", "en", "ett", "tv├Ñ", "tre", "fyra", "fem", "sex", "sju", "├Ñtta", "nio",
             "tio", "elva", "tolv", "treton", "fjorton", "femton", "sexton", "sjutton", "arton", "nitton", "tjugo",
-            "trettio", "fyrtio", "femtio", "sextio", "sjuttio", "åttio", "nittio", "hundra", "tusen", "miljon", "miljoner", "miljard", "miljarder", "och" };
+            "trettio", "fyrtio", "femtio", "sextio", "sjuttio", "├Ñttio", "nittio", "hundra", "tusen", "miljon", "miljoner", "miljard", "miljarder", "och" };
 
         int idx = 0; bool matched = false;
         while (idx < s.Length)
@@ -2579,7 +2503,7 @@ internal sealed class AffixManager : IDisposable
     /// </summary>
     private bool CheckCompoundRecursive(string word, int wordCount, int position, string? previousPart, int syllableCount, bool requiresForceUCase)
     {
-        // recursion trace suppressed (expensive) — only enable while actively debugging
+        // recursion trace suppressed (expensive) ÔÇö only enable while actively debugging
             // If we've consumed the entire word, we have a valid compound
         if (position >= word.Length)
         {
@@ -3366,7 +3290,7 @@ internal sealed class AffixManager : IDisposable
             }
         }
 
-        // Validate flags on the underlying baseCandidate — the affixBase
+        // Validate flags on the underlying baseCandidate ÔÇö the affixBase
         // argument should be a dictionary base form. Gather variants and
         // merge any appended flags so downstream checks are performed
         // consistently.
@@ -3557,7 +3481,7 @@ internal sealed class AffixManager : IDisposable
                     // enabled the recursive caller has additional logic to attempt
                     // an alternate alignment (shift the right-hand split by one
                     // character). That alternate alignment is handled by the
-                    // caller (CheckCompoundRecursive) — so here we simply reject
+                    // caller (CheckCompoundRecursive) ÔÇö so here we simply reject
                     // the raw triple overlap and let the caller try the simplified
                     // alignment if configured.
                     if (i <= prevEnd && i + 2 >= prevEnd)
@@ -3839,7 +3763,7 @@ internal sealed class AffixManager : IDisposable
                                 }
                                 catch
                                 {
-                                    // be defensive — if anything goes wrong treat as forbidden
+                                    // be defensive ÔÇö if anything goes wrong treat as forbidden
                                 }
                             }
 
@@ -3859,7 +3783,7 @@ internal sealed class AffixManager : IDisposable
     private bool CheckCompoundPatternMatch(string prevPart, string currentPart, CompoundPattern pattern, string? prevAppended = null, string? currAppended = null, bool prevReconstructed = false, bool currReconstructed = false)
     {
         // If the pattern uses the special '0' token it means 'unmodified'
-        // stem — only match when the candidate piece is an unmodified stem
+        // stem ÔÇö only match when the candidate piece is an unmodified stem
         // (i.e. present as a dictionary root, not an affix-derived surface).
         if (string.Equals(pattern.EndChars, "0", StringComparison.Ordinal))
         {
@@ -3965,7 +3889,7 @@ internal sealed class AffixManager : IDisposable
 
         if (_forbiddenWordFlag is null) return false;
 
-        // direct lookup — gather all homonym flag variants. If any variant
+        // direct lookup ÔÇö gather all homonym flag variants. If any variant
         // doesn't include the forbidden flag then the surface form is allowed.
         var variants = _hashManager.GetWordFlagVariants(word).ToList();
         if (variants.Count > 0)
@@ -4041,7 +3965,7 @@ internal sealed class AffixManager : IDisposable
 
     /// <summary>
     /// Inspect an affix-derived word and determine whether the derivation
-    /// would make a compound component forbidden — for example "foobars"
+    /// would make a compound component forbidden ÔÇö for example "foobars"
     /// when "bar"+s appends a COMPOUNDFORBID token should be rejected as
     /// a compound usage of the derived form. This helper centralizes the
     /// logic needed by public Spell() to avoid accepting such cases.
@@ -4368,7 +4292,7 @@ internal sealed class AffixManager : IDisposable
         int IsClean(string? appended) => (string.IsNullOrEmpty(_needAffixFlag) || !_hashManager.VariantContainsFlagAfterAppend(string.Empty, appended, _needAffixFlag)) ? 1 : 0;
 
         // Normalize common apostrophe-like characters so affix matching treats
-        // ’ (U+2019) and similar characters as equivalent to ASCII apostrophe.
+        // ÔÇÖ (U+2019) and similar characters as equivalent to ASCII apostrophe.
         static string NormalizeApostrophes(string s)
             => s?.Replace('\u2019', '\'').Replace('\u2018', '\'').Replace('\u02BC', '\'') ?? string.Empty;
 
@@ -4411,7 +4335,7 @@ internal sealed class AffixManager : IDisposable
 
             // If this affix doesn't change the surface form at all and the
             // resulting candidate isn't in the dictionary, there's no value in
-            // exploring recursive/compound combinations — we'd loop without
+            // exploring recursive/compound combinations ÔÇö we'd loop without
             // making progress. Skip to the next affix in that case.
             if (string.IsNullOrEmpty(sfx.Affix) && string.IsNullOrEmpty(sfx.Stripping) &&
                 string.Equals(reconstructedBase, word, StringComparison.OrdinalIgnoreCase) &&
@@ -4458,7 +4382,7 @@ internal sealed class AffixManager : IDisposable
             // If base1 can be created by combining two dictionary words, accept it
             if (!_hashManager.HasPhTarget(reconstructedBase) && IsCompoundMadeOfTwoWords(reconstructedBase, out _, out _))
                 {
-                // When COMPOUNDRULEs are defined they act as an allow-list — the
+                // When COMPOUNDRULEs are defined they act as an allow-list ÔÇö the
                 // reconstructed compound base should be validated against the
                 // configured COMPOUNDRULEs to ensure affix-derived forms only
                 // produce compounds that comply with the rules.
@@ -5040,7 +4964,7 @@ internal sealed class AffixManager : IDisposable
 
     /// <summary>
     /// Remove diacritic marks from a string (NFD->strip NonSpacingMark->NFC).
-    /// Used as a best-effort fallback for REP-style matches (e.g. í -> i).
+    /// Used as a best-effort fallback for REP-style matches (e.g. ├¡ -> i).
     /// </summary>
     private static string RemoveDiacritics(string input)
     {
