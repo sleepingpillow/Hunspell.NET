@@ -312,6 +312,52 @@ public sealed class HunspellSpellChecker : IDisposable
     }
 
     /// <summary>
+    /// Get stems (base forms) of a word.
+    /// </summary>
+    /// <param name="word">The word to analyze</param>
+    /// <returns>A list of possible stems for the word</returns>
+    public List<string> Stem(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(word);
+
+        var stems = new List<string>();
+        
+        if (_affixManager == null || _hashManager == null)
+        {
+            return stems;
+        }
+
+        // Get stems from the affix manager
+        _affixManager.GetStems(word, stems);
+        
+        return stems;
+    }
+
+    /// <summary>
+    /// Analyze a word and return morphological descriptions.
+    /// </summary>
+    /// <param name="word">The word to analyze</param>
+    /// <returns>A list of morphological analyses for the word</returns>
+    public List<string> Analyze(string word)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ArgumentException.ThrowIfNullOrWhiteSpace(word);
+
+        var analyses = new List<string>();
+        
+        if (_affixManager == null || _hashManager == null)
+        {
+            return analyses;
+        }
+
+        // Get morphological analyses from the affix manager
+        _affixManager.GetAnalyses(word, analyses);
+        
+        return analyses;
+    }
+
+    /// <summary>
     /// Get the dictionary encoding.
     /// </summary>
     public string DictionaryEncoding => _affixManager?.Encoding ?? "UTF-8";

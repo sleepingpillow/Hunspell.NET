@@ -6,6 +6,8 @@ A modern .NET 10 port of the popular Hunspell spell checker library. This implem
 
 - ✅ **Spell Checking**: Fast and accurate word validation
 - ✅ **Suggestion Generation**: Intelligent suggestions for misspelled words
+- ✅ **Morphological Analysis**: Extract linguistic information from words (NEW)
+- ✅ **Stemming**: Reduce words to their base forms (NEW)
 - ✅ **Compound Word Support**: Full support for compound words with customizable rules
 - ✅ **Runtime Dictionary Management**: Add/remove words at runtime
 - ✅ **Dictionary File Support**: Compatible with standard Hunspell .dic and .aff files
@@ -48,6 +50,47 @@ spellChecker.Remove("dotnet");
 // Get dictionary encoding
 string encoding = spellChecker.DictionaryEncoding; // "UTF-8"
 ```
+
+## Morphological Analysis and Stemming
+
+Hunspell.NET now supports morphological analysis and stemming for extracting linguistic information from words.
+
+### Stemming
+
+Reduce words to their base forms:
+
+```csharp
+using var spellChecker = new HunspellSpellChecker("en_US.aff", "en_US.dic");
+
+// Get the stem(s) of a word
+var stems = spellChecker.Stem("running");
+// Returns: ["run"]
+
+var stems2 = spellChecker.Stem("drinkables");
+// Returns: ["drinkable"]
+```
+
+### Morphological Analysis
+
+Extract detailed linguistic information:
+
+```csharp
+var analyses = spellChecker.Analyze("drinks");
+// Returns: ["po:noun is:plur", "po:verb al:drank al:drunk ts:present is:sg_3"]
+// Tags: po=part of speech, is=inflectional suffix, al=allomorph, ts=tense
+```
+
+**Morphological tags supported:**
+- `st:` - stem
+- `po:` - part of speech (noun, verb, adj, etc.)
+- `al:` - allomorph/alternate form
+- `ts:` - tense/aspect
+- `is:` - inflectional suffix (plur, sg_3, past, etc.)
+- `ds:` - derivational suffix
+- `dp:` - derivational prefix
+- `sp:` - surface prefix
+
+For complete documentation and examples, see [docs/morphological-analysis.md](docs/morphological-analysis.md).
 
 ## Dictionary Files
 

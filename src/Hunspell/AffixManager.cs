@@ -996,8 +996,15 @@ internal sealed class AffixManager : IDisposable
         var affix = affixParts[0] == "0" ? string.Empty : affixParts[0];
         var appendedFlag = affixParts.Length > 1 ? affixParts[1].Trim() : null;
         var condition = parts.Length > 4 ? parts[4] : ".";
+        
+        // Collect morphological data from parts[5] onwards
+        var morphData = string.Empty;
+        if (parts.Length > 5)
+        {
+            morphData = string.Join("\t", parts.Skip(5));
+        }
 
-        var rule = new AffixRule(flag, stripping, affix, condition, isPrefix, appendedFlag);
+        var rule = new AffixRule(flag, stripping, affix, condition, isPrefix, appendedFlag, morphData);
 
         if (isPrefix)
         {
@@ -5121,6 +5128,268 @@ internal sealed class AffixManager : IDisposable
         return false;
     }
 
+    /// <summary>
+    /// Get stems (base forms) for a word.
+    /// </summary>
+    internal void GetStems(string word, List<string> stems)
+    {
+        if (string.IsNullOrEmpty(word)) return;
+        
+        var seenStems = new HashSet<string>(StringComparer.Ordinal);
+        
+        // 1. Check if word is in dictionary directly
+        if (_hashManager.Lookup(word))
+        {
+            // Extract stem from morphological data (st: field)
+            var morphData = _hashManager.GetMorphologicalData(word);
+            foreach (var data in morphData)
+            {
+                var stem = ExtractStem(data, string.Empty);
+                if (!string.IsNullOrEmpty(stem) && seenStems.Add(stem))
+                {
+                    stems.Add(stem);
+                }
+            }
+            
+            // If no explicit stem found in morphology, the word itself is a stem
+            if (stems.Count == 0)
+            {
+                if (seenStems.Add(word))
+                {
+                    stems.Add(word);
+                }
+            }
+        }
+        
+        // 2. Try removing suffixes
+        foreach (var suffix in _suffixes)
+        {
+            if (!string.IsNullOrEmpty(suffix.Affix) && word.EndsWith(suffix.Affix))
+            {
+                var baseWord = word.Substring(0, word.Length - suffix.Affix.Length) + suffix.Stripping;
+                
+                // Check if baseWord is either in dictionary OR a valid affixed form
+                if (_hashManager.Lookup(baseWord) || CheckAffixedWord(baseWord, allowBaseOnlyInCompound: true))
+                {
+                    // For dictionary words, check if they have the suffix flag
+                    if (_hashManager.Lookup(baseWord))
+                    {
+                        var flags = _hashManager.GetWordFlags(baseWord);
+                        if (flags.Contains(suffix.Flag))
+                        {
+                            // The base word IS the stem (after affix removal)
+                            if (seenStems.Add(baseWord))
+                            {
+                                stems.Add(baseWord);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // For affixed words, we need to verify they accept this suffix
+                        // by checking if the affix that created them has the suffix flag
+                        // For simplicity, if it's a valid word, accept it as a stem
+                        if (seenStems.Add(baseWord))
+                        {
+                            stems.Add(baseWord);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 3. Try removing prefixes
+        foreach (var prefix in _prefixes)
+        {
+            if (!string.IsNullOrEmpty(prefix.Affix) && word.StartsWith(prefix.Affix))
+            {
+                var baseWord = prefix.Stripping + word.Substring(prefix.Affix.Length);
+                
+                // Check if baseWord is either in dictionary OR a valid affixed form
+                if (_hashManager.Lookup(baseWord) || CheckAffixedWord(baseWord, allowBaseOnlyInCompound: true))
+                {
+                    if (_hashManager.Lookup(baseWord))
+                    {
+                        var flags = _hashManager.GetWordFlags(baseWord);
+                        if (flags.Contains(prefix.Flag))
+                        {
+                            if (seenStems.Add(baseWord))
+                            {
+                                stems.Add(baseWord);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        if (seenStems.Add(baseWord))
+                        {
+                            stems.Add(baseWord);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Get morphological analyses for a word.
+    /// </summary>
+    internal void GetAnalyses(string word, List<string> analyses)
+    {
+        if (string.IsNullOrEmpty(word)) return;
+        
+        var seenAnalyses = new HashSet<string>(StringComparer.Ordinal);
+        
+        // 1. Check if word is in dictionary directly
+        if (_hashManager.Lookup(word))
+        {
+            var morphData = _hashManager.GetMorphologicalData(word);
+            foreach (var data in morphData)
+            {
+                var analysis = BuildAnalysis(data, word, null);
+                if (!string.IsNullOrEmpty(analysis) && seenAnalyses.Add(analysis))
+                {
+                    analyses.Add(analysis);
+                }
+            }
+        }
+        
+        // 2. Try removing suffixes
+        foreach (var suffix in _suffixes)
+        {
+            if (!string.IsNullOrEmpty(suffix.Affix) && word.EndsWith(suffix.Affix))
+            {
+                var baseWord = word.Substring(0, word.Length - suffix.Affix.Length) + suffix.Stripping;
+                
+                // Check both dictionary words and affixed forms
+                if (_hashManager.Lookup(baseWord))
+                {
+                    var flags = _hashManager.GetWordFlags(baseWord);
+                    if (flags.Contains(suffix.Flag))
+                    {
+                        var morphData = _hashManager.GetMorphologicalData(baseWord);
+                        foreach (var data in morphData)
+                        {
+                            var analysis = BuildAnalysis(data, baseWord, suffix);
+                            if (!string.IsNullOrEmpty(analysis) && seenAnalyses.Add(analysis))
+                            {
+                                analyses.Add(analysis);
+                            }
+                        }
+                    }
+                }
+                else if (CheckAffixedWord(baseWord, allowBaseOnlyInCompound: true))
+                {
+                    // Recursively get analyses for the base word
+                    var baseAnalyses = new List<string>();
+                    GetAnalyses(baseWord, baseAnalyses);
+                    
+                    foreach (var baseAnalysis in baseAnalyses)
+                    {
+                        var analysis = BuildAnalysis(baseAnalysis, baseWord, suffix);
+                        if (!string.IsNullOrEmpty(analysis) && seenAnalyses.Add(analysis))
+                        {
+                            analyses.Add(analysis);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 3. Try removing prefixes
+        foreach (var prefix in _prefixes)
+        {
+            if (!string.IsNullOrEmpty(prefix.Affix) && word.StartsWith(prefix.Affix))
+            {
+                var baseWord = prefix.Stripping + word.Substring(prefix.Affix.Length);
+                
+                if (_hashManager.Lookup(baseWord))
+                {
+                    var flags = _hashManager.GetWordFlags(baseWord);
+                    if (flags.Contains(prefix.Flag))
+                    {
+                        var morphData = _hashManager.GetMorphologicalData(baseWord);
+                        foreach (var data in morphData)
+                        {
+                            var analysis = BuildAnalysis(data, baseWord, prefix);
+                            if (!string.IsNullOrEmpty(analysis) && seenAnalyses.Add(analysis))
+                            {
+                                analyses.Add(analysis);
+                            }
+                        }
+                    }
+                }
+                else if (CheckAffixedWord(baseWord, allowBaseOnlyInCompound: true))
+                {
+                    var baseAnalyses = new List<string>();
+                    GetAnalyses(baseWord, baseAnalyses);
+                    
+                    foreach (var baseAnalysis in baseAnalyses)
+                    {
+                        var analysis = BuildAnalysis(baseAnalysis, baseWord, prefix);
+                        if (!string.IsNullOrEmpty(analysis) && seenAnalyses.Add(analysis))
+                        {
+                            analyses.Add(analysis);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// <summary>
+    /// Extract stem from morphological data (look for st: field).
+    /// </summary>
+    private string ExtractStem(string morphData, string defaultStem)
+    {
+        if (string.IsNullOrEmpty(morphData)) return defaultStem;
+        
+        var tokens = morphData.Split(new[] { '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries);
+        foreach (var token in tokens)
+        {
+            if (token.StartsWith("st:", StringComparison.OrdinalIgnoreCase))
+            {
+                return token.Substring(3);
+            }
+        }
+        
+        return defaultStem;
+    }
+
+    /// <summary>
+    /// Build a morphological analysis string from base morphology and affix.
+    /// </summary>
+    private string BuildAnalysis(string baseMorphData, string baseWord, AffixRule? affix)
+    {
+        var parts = new List<string>();
+        
+        // Add prefix morphology if applicable
+        if (affix != null && affix.IsPrefix && !string.IsNullOrEmpty(affix.MorphologicalData))
+        {
+            parts.Add(affix.MorphologicalData);
+            
+            // Add sp: (surface prefix) field
+            if (!string.IsNullOrEmpty(affix.Affix))
+            {
+                parts.Add($"sp:{affix.Affix}");
+            }
+        }
+        
+        // Add base morphology
+        if (!string.IsNullOrEmpty(baseMorphData))
+        {
+            parts.Add(baseMorphData);
+        }
+        
+        // Add suffix morphology if applicable
+        if (affix != null && !affix.IsPrefix && !string.IsNullOrEmpty(affix.MorphologicalData))
+        {
+            parts.Add(affix.MorphologicalData);
+        }
+        
+        return string.Join(" ", parts.Where(p => !string.IsNullOrEmpty(p)));
+    }
+
     public void Dispose()
     {
         if (!_disposed)
@@ -5132,7 +5401,7 @@ internal sealed class AffixManager : IDisposable
         }
     }
 
-    private record AffixRule(string Flag, string Stripping, string Affix, string Condition, bool IsPrefix, string? AppendedFlag);
+    private record AffixRule(string Flag, string Stripping, string Affix, string Condition, bool IsPrefix, string? AppendedFlag, string MorphologicalData = "");
 
     /// <summary>
     /// Represents a CHECKCOMPOUNDPATTERN rule.

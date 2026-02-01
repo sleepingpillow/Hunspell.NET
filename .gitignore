@@ -48,6 +48,9 @@ CodeCoverage/
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*
 
+# Temporary test files
+tmp/
+
 # NUnit
 *.VisualState.xml
 TestResult.xml

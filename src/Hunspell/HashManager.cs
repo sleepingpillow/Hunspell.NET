@@ -197,12 +197,20 @@ internal sealed class HashManager : IDisposable
 
         if (!string.IsNullOrEmpty(word))
         {
+            // Collect morphological data (all tokens after morphIndex that aren't ph:)
+            var morphData = string.Empty;
+            if (morphIndex > 0 && morphIndex < tokens.Length)
+            {
+                var morphTokens = tokens.Skip(morphIndex).Where(t => !t.StartsWith("ph:", StringComparison.OrdinalIgnoreCase));
+                morphData = string.Join("\t", morphTokens);
+            }
+            
             if (!_words.TryGetValue(word, out var list))
             {
                 list = new List<WordEntry>();
                 _words[word] = list;
             }
-            list.Add(new WordEntry(word, flags));
+            list.Add(new WordEntry(word, flags, morphData));
             // If there are morphological tokens after the main token, extract
             // any ph: entries and index them so higher-level logic (e.g., the
             // affix/compound checker) can consult them.
@@ -786,6 +794,26 @@ internal sealed class HashManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// Get morphological data for a word. Returns all morphological descriptions
+    /// from dictionary entries for this word.
+    /// </summary>
+    public IEnumerable<string> GetMorphologicalData(string word)
+    {
+        if (string.IsNullOrEmpty(word)) yield break;
+        
+        if (_words.TryGetValue(word, out var entries))
+        {
+            foreach (var entry in entries)
+            {
+                if (!string.IsNullOrEmpty(entry.MorphologicalData))
+                {
+                    yield return entry.MorphologicalData;
+                }
+            }
+        }
+    }
+
     public void Dispose()
     {
         if (!_disposed)
@@ -796,7 +824,7 @@ internal sealed class HashManager : IDisposable
         }
     }
 
-    private record WordEntry(string Word, string Flags);
+    private record WordEntry(string Word, string Flags, string MorphologicalData = "");
 
     private string ExpandAliasFlags(string? raw)
     {
