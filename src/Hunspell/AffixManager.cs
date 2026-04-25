@@ -3158,8 +3158,16 @@ internal sealed class AffixManager : IDisposable
         // Ensure the part satisfies all required compound flags; if not, try deriving
         // an affix base that contributes the missing flags (e.g., COMPOUNDEND).
         var mergedVariants = variants.Select(v => _hashManager.MergeFlags(v ?? string.Empty, appendedFlag)).ToList();
+        var positionalRequiredFlags = requiredCompoundFlags
+            .Where(cf => !string.IsNullOrEmpty(cf) && cf != _onlyInCompound)
+            .ToList();
         bool meetsRequiredCompoundFlags = requiredCompoundFlags.Count == 0 ||
-                                          mergedVariants.Any(mv => requiredCompoundFlags.All(cf => _hashManager.VariantContainsFlagAfterAppend(mv ?? string.Empty, null, cf)));
+                                          mergedVariants.Any(mv =>
+                                              positionalRequiredFlags.Count > 0
+                                                  ? positionalRequiredFlags.Any(cf => _hashManager.VariantContainsFlagAfterAppend(mv ?? string.Empty, null, cf))
+                                                  : !string.IsNullOrEmpty(_onlyInCompound) &&
+                                                    requiredCompoundFlags.Contains(_onlyInCompound) &&
+                                                    _hashManager.VariantContainsFlagAfterAppend(mv ?? string.Empty, null, _onlyInCompound));
 
         if (!meetsRequiredCompoundFlags)
         {

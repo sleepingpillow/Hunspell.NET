@@ -22,22 +22,24 @@ internal sealed class SuggestManager
 
     public void GenerateSuggestions(string word, List<string> suggestions)
     {
-        GenerateSubstitutionSuggestions(word, suggestions);
-        GenerateInsertionSuggestions(word, suggestions);
-        GenerateDeletionSuggestions(word, suggestions);
-        GenerateSwapSuggestions(word, suggestions);
-        GenerateRepSuggestions(word, suggestions);
+        var seenSuggestions = new HashSet<string>(suggestions, StringComparer.Ordinal);
+
+        GenerateSubstitutionSuggestions(word, suggestions, seenSuggestions);
+        GenerateInsertionSuggestions(word, suggestions, seenSuggestions);
+        GenerateDeletionSuggestions(word, suggestions, seenSuggestions);
+        GenerateSwapSuggestions(word, suggestions, seenSuggestions);
+        GenerateRepSuggestions(word, suggestions, seenSuggestions);
 
         if (!_affixManager.NoSplitSuggestions)
         {
-            GenerateSplitSuggestions(word, suggestions);
+            GenerateSplitSuggestions(word, suggestions, seenSuggestions);
         }
 
-        GeneratePossessiveSuggestions(word, suggestions);
+        GeneratePossessiveSuggestions(word, suggestions, seenSuggestions);
 
         if (suggestions.Count < 10)
         {
-            GenerateTwoEditSuggestions(word, suggestions);
+            GenerateTwoEditSuggestions(word, suggestions, seenSuggestions);
         }
 
         if (_affixManager.OnlyMaxDiff && _affixManager.MaxDiff > 0)
@@ -57,47 +59,66 @@ internal sealed class SuggestManager
     {
         if (string.IsNullOrEmpty(word) || _affixManager.IconvTable.Count == 0) yield break;
 
-        var seen = new HashSet<string>(StringComparer.Ordinal);
-        var queue = new Queue<string>();
-        queue.Enqueue(word);
-        seen.Add(word);
-
-        const int MaxVariants = 500;
-
-        while (queue.Count > 0 && seen.Count < MaxVariants)
+        var converted = ApplyIconv(word);
+        if (!string.Equals(converted, word, StringComparison.Ordinal))
         {
-            var current = queue.Dequeue();
-            foreach (var (from, to) in _affixManager.IconvTable)
-            {
-                if (string.IsNullOrEmpty(from)) continue;
-                int idx = current.IndexOf(from, StringComparison.Ordinal);
-                if (idx < 0) continue;
-
-                var global = current.Replace(from, to);
-                if (seen.Add(global))
-                {
-                    queue.Enqueue(global);
-                    yield return global;
-                }
-
-                int pos = 0;
-                while ((pos = current.IndexOf(from, pos, StringComparison.Ordinal)) >= 0)
-                {
-                    var single = current.Substring(0, pos) + to + current.Substring(pos + from.Length);
-                    if (seen.Add(single))
-                    {
-                        queue.Enqueue(single);
-                        yield return single;
-                    }
-                    pos++;
-                }
-
-                if (seen.Count >= MaxVariants) yield break;
-            }
+            yield return converted;
         }
     }
 
-    private void GenerateTwoEditSuggestions(string word, List<string> suggestions)
+    private string ApplyIconv(string word)
+    {
+        var converted = new StringBuilder(word.Length);
+
+        for (int index = 0; index < word.Length;)
+        {
+            (string from, string to)? bestMatch = null;
+
+            foreach (var rule in _affixManager.IconvTable)
+            {
+                if (string.IsNullOrEmpty(rule.from) || index + rule.from.Length > word.Length)
+                {
+                    continue;
+                }
+
+                if (!word.AsSpan(index, rule.from.Length).SequenceEqual(rule.from))
+                {
+                    continue;
+                }
+
+                if (bestMatch is null || rule.from.Length > bestMatch.Value.from.Length)
+                {
+                    bestMatch = rule;
+                }
+            }
+
+            if (bestMatch is { } match)
+            {
+                converted.Append(match.to);
+                index += match.from.Length;
+            }
+            else
+            {
+                converted.Append(word[index]);
+                index++;
+            }
+        }
+
+        return converted.ToString();
+    }
+
+    private static bool TryAddSuggestion(List<string> suggestions, HashSet<string> seenSuggestions, string? suggestion)
+    {
+        if (string.IsNullOrEmpty(suggestion) || !seenSuggestions.Add(suggestion))
+        {
+            return false;
+        }
+
+        suggestions.Add(suggestion);
+        return true;
+    }
+
+    private void GenerateTwoEditSuggestions(string word, List<string> suggestions, HashSet<string> seenSuggestions)
     {
         const int candidate1Cap = 500;
         const int candidate2Cap = 2000;
@@ -152,9 +173,9 @@ internal sealed class SuggestManager
         {
             if (suggestions.Count >= 10) break;
 
-            if (_hashManager.Lookup(cand1) && !suggestions.Contains(cand1))
+            if (_hashManager.Lookup(cand1))
             {
-                suggestions.Add(cand1);
+                TryAddSuggestion(suggestions, seenSuggestions, cand1);
                 if (suggestions.Count >= 10) break;
             }
 
@@ -169,9 +190,9 @@ internal sealed class SuggestManager
                         span[state.i] = state.c;
                     });
                     candidate2Seen++;
-                    if (_hashManager.Lookup(cand2) && !suggestions.Contains(cand2))
+                    if (_hashManager.Lookup(cand2))
                     {
-                        suggestions.Add(cand2);
+                        TryAddSuggestion(suggestions, seenSuggestions, cand2);
                         if (suggestions.Count >= 10) break;
                     }
                     if (candidate2Seen >= candidate2Cap) break;
@@ -182,9 +203,9 @@ internal sealed class SuggestManager
             {
                 var cand2 = cand1.Remove(i, 1);
                 candidate2Seen++;
-                if (_hashManager.Lookup(cand2) && !suggestions.Contains(cand2))
+                if (_hashManager.Lookup(cand2))
                 {
-                    suggestions.Add(cand2);
+                    TryAddSuggestion(suggestions, seenSuggestions, cand2);
                     if (suggestions.Count >= 10) break;
                 }
             }
@@ -195,9 +216,9 @@ internal sealed class SuggestManager
                 {
                     var cand2 = cand1.Insert(i, c.ToString());
                     candidate2Seen++;
-                    if (_hashManager.Lookup(cand2) && !suggestions.Contains(cand2))
+                    if (_hashManager.Lookup(cand2))
                     {
-                        suggestions.Add(cand2);
+                        TryAddSuggestion(suggestions, seenSuggestions, cand2);
                         if (suggestions.Count >= 10) break;
                     }
                     if (candidate2Seen >= candidate2Cap) break;
@@ -212,9 +233,9 @@ internal sealed class SuggestManager
                     (span[state.i], span[state.i + 1]) = (span[state.i + 1], span[state.i]);
                 });
                 candidate2Seen++;
-                if (_hashManager.Lookup(cand2) && !suggestions.Contains(cand2))
+                if (_hashManager.Lookup(cand2))
                 {
-                    suggestions.Add(cand2);
+                    TryAddSuggestion(suggestions, seenSuggestions, cand2);
                     if (suggestions.Count >= 10) break;
                 }
             }
@@ -235,9 +256,9 @@ internal sealed class SuggestManager
                     scanned++;
                     if (string.Equals(w, word, StringComparison.OrdinalIgnoreCase)) continue;
                     int d = BoundedLevenshtein(word, w, maxDist);
-                    if (d >= 0 && d <= maxDist && !suggestions.Contains(w))
+                    if (d >= 0 && d <= maxDist)
                     {
-                        suggestions.Add(w);
+                        TryAddSuggestion(suggestions, seenSuggestions, w);
                     }
                 }
             }
@@ -273,7 +294,7 @@ internal sealed class SuggestManager
         return prev[m] <= maxDistance ? prev[m] : -1;
     }
 
-    private void GenerateSubstitutionSuggestions(string word, List<string> suggestions)
+    private void GenerateSubstitutionSuggestions(string word, List<string> suggestions, HashSet<string> seenSuggestions)
     {
         var tryChars = _affixManager.TryCharacters;
 
@@ -292,15 +313,15 @@ internal sealed class SuggestManager
                     span[state.i] = state.c;
                 });
 
-                if (_hashManager.Lookup(suggestion) && !suggestions.Contains(suggestion))
+                if (_hashManager.Lookup(suggestion))
                 {
-                    suggestions.Add(suggestion);
+                    TryAddSuggestion(suggestions, seenSuggestions, suggestion);
                 }
             }
         }
     }
 
-    private void GenerateInsertionSuggestions(string word, List<string> suggestions)
+    private void GenerateInsertionSuggestions(string word, List<string> suggestions, HashSet<string> seenSuggestions)
     {
         var tryChars = _affixManager.TryCharacters;
 
@@ -310,28 +331,28 @@ internal sealed class SuggestManager
             {
                 var suggestion = word.Insert(i, c.ToString());
 
-                if (_hashManager.Lookup(suggestion) && !suggestions.Contains(suggestion))
+                if (_hashManager.Lookup(suggestion))
                 {
-                    suggestions.Add(suggestion);
+                    TryAddSuggestion(suggestions, seenSuggestions, suggestion);
                 }
             }
         }
     }
 
-    private void GenerateDeletionSuggestions(string word, List<string> suggestions)
+    private void GenerateDeletionSuggestions(string word, List<string> suggestions, HashSet<string> seenSuggestions)
     {
         for (int i = 0; i < word.Length; i++)
         {
             var suggestion = word.Remove(i, 1);
 
-            if (_hashManager.Lookup(suggestion) && !suggestions.Contains(suggestion))
+            if (_hashManager.Lookup(suggestion))
             {
-                suggestions.Add(suggestion);
+                TryAddSuggestion(suggestions, seenSuggestions, suggestion);
             }
         }
     }
 
-    private void GenerateSwapSuggestions(string word, List<string> suggestions)
+    private void GenerateSwapSuggestions(string word, List<string> suggestions, HashSet<string> seenSuggestions)
     {
         for (int i = 0; i < word.Length - 1; i++)
         {
@@ -341,14 +362,14 @@ internal sealed class SuggestManager
                 (span[state.i], span[state.i + 1]) = (span[state.i + 1], span[state.i]);
             });
 
-            if (_hashManager.Lookup(suggestion) && !suggestions.Contains(suggestion))
+            if (_hashManager.Lookup(suggestion))
             {
-                suggestions.Add(suggestion);
+                TryAddSuggestion(suggestions, seenSuggestions, suggestion);
             }
         }
     }
 
-    private void GenerateRepSuggestions(string word, List<string> suggestions)
+    private void GenerateRepSuggestions(string word, List<string> suggestions, HashSet<string> seenSuggestions)
     {
         if (_affixManager.RepTable.Count > 0)
         {
@@ -360,10 +381,9 @@ internal sealed class SuggestManager
                 while ((start = word.IndexOf(from, start, StringComparison.OrdinalIgnoreCase)) >= 0)
                 {
                     var candidate = word.Substring(0, start) + to + word.Substring(start + from.Length);
-                    if ((_hashManager.Lookup(candidate) || _affixManager.CheckAffixedWord(candidate)) && !suggestions.Contains(candidate))
+                    if (_hashManager.Lookup(candidate) || _affixManager.CheckAffixedWord(candidate))
                     {
-                        suggestions.Add(candidate);
-                        if (suggestions.Count >= 10) return;
+                        if (TryAddSuggestion(suggestions, seenSuggestions, candidate) && suggestions.Count >= 10) return;
                     }
 
                     start += 1;
@@ -376,10 +396,9 @@ internal sealed class SuggestManager
             foreach (var candidate in _hashManager.GetPhReplacementCandidates(word))
             {
                 if (suggestions.Count >= 10) break;
-                if ((_hashManager.Lookup(candidate) || _affixManager.CheckAffixedWord(candidate)) && !suggestions.Contains(candidate))
+                if (_hashManager.Lookup(candidate) || _affixManager.CheckAffixedWord(candidate))
                 {
-                    suggestions.Add(candidate);
-                    if (suggestions.Count >= 10) break;
+                    if (TryAddSuggestion(suggestions, seenSuggestions, candidate) && suggestions.Count >= 10) break;
                 }
             }
         }
@@ -388,7 +407,7 @@ internal sealed class SuggestManager
         }
     }
 
-    private void GenerateSplitSuggestions(string word, List<string> suggestions)
+    private void GenerateSplitSuggestions(string word, List<string> suggestions, HashSet<string> seenSuggestions)
     {
         if (word.Contains(' ')) return;
 
@@ -400,16 +419,16 @@ internal sealed class SuggestManager
             if (_hashManager.Lookup(left) && _hashManager.Lookup(right))
             {
                 var candidate = left + " " + right;
-                if (!suggestions.Contains(candidate)) suggestions.Add(candidate);
+                TryAddSuggestion(suggestions, seenSuggestions, candidate);
             }
 
             if (right.Contains('"') || left.Contains('"'))
             {
                 var candidate2 = word.Replace('"', ' ');
                 var parts = candidate2.Split(' ');
-                if (parts.Length == 2 && _hashManager.Lookup(parts[0]) && _hashManager.Lookup(parts[1]) && !suggestions.Contains(candidate2))
+                if (parts.Length == 2 && _hashManager.Lookup(parts[0]) && _hashManager.Lookup(parts[1]))
                 {
-                    suggestions.Add(candidate2);
+                    TryAddSuggestion(suggestions, seenSuggestions, candidate2);
                 }
             }
         }
@@ -424,7 +443,7 @@ internal sealed class SuggestManager
                 if (_hashManager.Lookup(a) && _hashManager.Lookup(b) && _hashManager.Lookup(c))
                 {
                     var candidate = string.Join(" ", new[] { a, b, c });
-                    if (!suggestions.Contains(candidate)) suggestions.Add(candidate);
+                    TryAddSuggestion(suggestions, seenSuggestions, candidate);
                 }
             }
         }
@@ -449,16 +468,16 @@ internal sealed class SuggestManager
 
                     if (string.IsNullOrEmpty(lc) || string.IsNullOrEmpty(rc)) continue;
                     var phrase = lc + " " + rc;
-                    if (_hashManager.Lookup(lc) && _hashManager.Lookup(rc) && !suggestions.Contains(phrase))
+                    if (_hashManager.Lookup(lc) && _hashManager.Lookup(rc))
                     {
-                        suggestions.Add(phrase);
+                        TryAddSuggestion(suggestions, seenSuggestions, phrase);
                         if (suggestions.Count >= 10) break;
                     }
 
                     var concat = lc + rc;
-                    if (_hashManager.Lookup(concat) && !suggestions.Contains(concat))
+                    if (_hashManager.Lookup(concat))
                     {
-                        suggestions.Add(concat);
+                        TryAddSuggestion(suggestions, seenSuggestions, concat);
                         if (suggestions.Count >= 10) break;
                     }
                 }
@@ -466,23 +485,9 @@ internal sealed class SuggestManager
 
             if (suggestions.Count < 10 && _hashManager.Lookup(left))
             {
-                if ((right.Length <= 4 || right.EndsWith("s", StringComparison.OrdinalIgnoreCase) || right.Contains('"')) && !suggestions.Contains(left))
+                if (right.Length <= 4 || right.EndsWith("s", StringComparison.OrdinalIgnoreCase) || right.Contains('"'))
                 {
-                    suggestions.Add(left);
-                }
-            }
-
-            if (suggestions.Count < 10)
-            {
-                foreach (var w in _hashManager.GetAllWords())
-                {
-                    if (suggestions.Count >= 10) break;
-                    if (string.IsNullOrEmpty(w)) continue;
-                    if (w.EndsWith(right, StringComparison.OrdinalIgnoreCase) && !suggestions.Contains(w))
-                    {
-                        suggestions.Add(w);
-                        if (suggestions.Count >= 10) break;
-                    }
+                    TryAddSuggestion(suggestions, seenSuggestions, left);
                 }
             }
 
@@ -497,16 +502,15 @@ internal sealed class SuggestManager
 
                 if (!string.Equals(normalizedRight, right, StringComparison.OrdinalIgnoreCase)
                     && _hashManager.Lookup(normalizedRight)
-                    && _hashManager.Lookup("e")
-                    && !suggestions.Contains(left + " e " + normalizedRight))
+                    && _hashManager.Lookup("e"))
                 {
-                    suggestions.Add(left + " e " + normalizedRight);
+                    TryAddSuggestion(suggestions, seenSuggestions, left + " e " + normalizedRight);
                 }
             }
         }
     }
 
-    private void GeneratePossessiveSuggestions(string word, List<string> suggestions)
+    private void GeneratePossessiveSuggestions(string word, List<string> suggestions, HashSet<string> seenSuggestions)
     {
         if (word.Length <= 2) return;
         if (!word.EndsWith("s", StringComparison.OrdinalIgnoreCase)) return;
@@ -515,7 +519,7 @@ internal sealed class SuggestManager
         if (_hashManager.Lookup(stem))
         {
             var cand = stem + "'s";
-            if (!suggestions.Contains(cand)) suggestions.Add(cand);
+            TryAddSuggestion(suggestions, seenSuggestions, cand);
         }
 
         if (_affixManager.FullStrip)
@@ -526,13 +530,13 @@ internal sealed class SuggestManager
                 if (_hashManager.Lookup(stemEs))
                 {
                     var cand2 = stemEs + "'s";
-                    if (!suggestions.Contains(cand2)) suggestions.Add(cand2);
+                    TryAddSuggestion(suggestions, seenSuggestions, cand2);
                 }
             }
 
-            if (_hashManager.Lookup(stem) && !suggestions.Contains(stem))
+            if (_hashManager.Lookup(stem))
             {
-                suggestions.Add(stem);
+                TryAddSuggestion(suggestions, seenSuggestions, stem);
             }
         }
     }
