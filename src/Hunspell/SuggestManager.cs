@@ -371,6 +371,15 @@ internal sealed class SuggestManager
 
     private void GenerateRepSuggestions(string word, List<string> suggestions, HashSet<string> seenSuggestions)
     {
+        // For very large dictionaries the affix-derivation check
+        // (CheckAffixedWord -> TryFindAffixBase) is expensive and can become
+        // pathological for borderline candidates (e.g. Swedish sv_FI with
+        // ~150k words, ~492 SFX/PFX rules, COMPOUNDMIN 1). In that regime,
+        // restrict REP-derived candidates to those present directly in the
+        // dictionary; this preserves the most useful REP suggestions while
+        // avoiding the slow affix walk per candidate.
+        bool useAffixCheck = _hashManager.WordCount <= 50_000;
+
         if (_affixManager.RepTable.Count > 0)
         {
             foreach (var (from, to) in _affixManager.RepTable)
@@ -381,7 +390,7 @@ internal sealed class SuggestManager
                 while ((start = word.IndexOf(from, start, StringComparison.OrdinalIgnoreCase)) >= 0)
                 {
                     var candidate = word.Substring(0, start) + to + word.Substring(start + from.Length);
-                    if (_hashManager.Lookup(candidate) || _affixManager.CheckAffixedWord(candidate))
+                    if (_hashManager.Lookup(candidate) || (useAffixCheck && _affixManager.CheckAffixedWord(candidate)))
                     {
                         if (TryAddSuggestion(suggestions, seenSuggestions, candidate) && suggestions.Count >= 10) return;
                     }
@@ -396,7 +405,7 @@ internal sealed class SuggestManager
             foreach (var candidate in _hashManager.GetPhReplacementCandidates(word))
             {
                 if (suggestions.Count >= 10) break;
-                if (_hashManager.Lookup(candidate) || _affixManager.CheckAffixedWord(candidate))
+                if (_hashManager.Lookup(candidate) || (useAffixCheck && _affixManager.CheckAffixedWord(candidate)))
                 {
                     if (TryAddSuggestion(suggestions, seenSuggestions, candidate) && suggestions.Count >= 10) break;
                 }
@@ -622,12 +631,20 @@ internal sealed class SuggestManager
             }
         }
 
-        if (seen.Count < cap)
+        // Brute-force fallback: scan the dictionary for close matches by edit
+        // distance. This is bounded by dictionary size and a hard scan cap to
+        // avoid pathological hangs for very large dictionaries (e.g., the
+        // 150k-word Swedish sv_FI list), where this fallback is invoked many
+        // times per call (twice per split position in GenerateSplitSuggestions).
+        if (seen.Count < cap && _hashManager.WordCount <= 20_000)
         {
+            const int MaxScan = 2_000;
             int maxDist = part.Length <= 3 ? 3 : 2;
+            int scanned = 0;
             foreach (var w in _hashManager.GetAllWords())
             {
-                if (seen.Count >= cap) break;
+                if (seen.Count >= cap || scanned >= MaxScan) break;
+                scanned++;
                 if (seen.Contains(w)) continue;
                 int d = BoundedLevenshtein(part, w, maxDist);
 

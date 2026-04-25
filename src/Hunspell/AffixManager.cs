@@ -114,6 +114,16 @@ internal sealed class AffixManager : IDisposable
     // Reentrancy guard for nested IsCompoundMadeOfTwoWords checks
     private int _twoWordCheckDepth;
 
+    // Memoization of the simple `IsCompoundMadeOfTwoWords(word)` overload.
+    // Results depend only on the word and immutable dictionary/affix state,
+    // so caching is safe across an instance's lifetime. The in-progress set
+    // breaks mutual recursion cycles between IsCompoundMadeOfTwoWords and
+    // TryFindAffixBase (which can invoke the simple overload again on
+    // intermediate sub-words).
+    private readonly Dictionary<string, (bool result, bool aForce, bool bForce)> _twoWordSimpleCache
+        = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _twoWordSimpleInProgress = new(StringComparer.Ordinal);
+
     // Common suffixes for COMPOUNDMORESUFFIXES simplified implementation
     private static readonly string[] CommonSuffixes = { "s", "es", "ed", "ing", "er", "est", "ly", "ness", "ment", "tion" };
 
@@ -4397,8 +4407,13 @@ internal sealed class AffixManager : IDisposable
                 }
             }
 
-            // If base1 can be created by combining two dictionary words, accept it
-            if (!_hashManager.HasPhTarget(reconstructedBase) && IsCompoundMadeOfTwoWords(reconstructedBase, out _, out _))
+            // If base1 can be created by combining two dictionary words, accept it.
+            // Gate the recursive compound check so it only runs at the outermost
+            // affix-base resolution (matching the gate at line ~3305). This
+            // prevents pathological explosion when CheckAffixedWord is invoked
+            // from inside IsCompoundMadeOfTwoWords on small subwords (e.g.,
+            // Swedish sv_FI with COMPOUNDMIN 1 and ~492 SFX/PFX rules).
+            if (_twoWordCheckDepth == 0 && !_hashManager.HasPhTarget(reconstructedBase) && IsCompoundMadeOfTwoWords(reconstructedBase, out _, out _))
                 {
                 // When COMPOUNDRULEs are defined they act as an allow-list ÔÇö the
                 // reconstructed compound base should be validated against the
@@ -4537,7 +4552,7 @@ internal sealed class AffixManager : IDisposable
                     }
                 }
 
-                if (!_hashManager.HasPhTarget(reconstructedDouble) && IsCompoundMadeOfTwoWords(reconstructedDouble, out _, out _))
+                if (_twoWordCheckDepth == 0 && !_hashManager.HasPhTarget(reconstructedDouble) && IsCompoundMadeOfTwoWords(reconstructedDouble, out _, out _))
                 {
                     // Validate flags for the inner suffix (s2)
                     var baseVariants = _hashManager.GetWordFlagVariants(reconstructedDouble).ToList();
@@ -4811,7 +4826,7 @@ internal sealed class AffixManager : IDisposable
                         }
                     }
 
-                    if (!_hashManager.HasPhTarget(reconstructedInner) && IsCompoundMadeOfTwoWords(reconstructedInner, out _, out _))
+                    if (_twoWordCheckDepth == 0 && !_hashManager.HasPhTarget(reconstructedInner) && IsCompoundMadeOfTwoWords(reconstructedInner, out _, out _))
                     {
                         if (!FailsPartialCircumfix(AffixMatchKind.PrefixOnly, ConcatFlags(inner.AppendedFlag, pfx.AppendedFlag)))
                         {
@@ -5006,7 +5021,35 @@ internal sealed class AffixManager : IDisposable
     /// provides a shallow nested-compound check without unbounded recursion.
     /// </summary>
     private bool IsCompoundMadeOfTwoWords(string word, out bool aRequiresForce, out bool bRequiresForce)
-        => IsCompoundMadeOfTwoWords(word, 0, 0, word.Length, word, out aRequiresForce, out bRequiresForce);
+    {
+        if (_twoWordSimpleCache.TryGetValue(word, out var cached))
+        {
+            aRequiresForce = cached.aForce;
+            bRequiresForce = cached.bForce;
+            return cached.result;
+        }
+
+        if (!_twoWordSimpleInProgress.Add(word))
+        {
+            // Re-entrant call for the same word: break the cycle by treating
+            // it as not-a-compound for this nested invocation. The outermost
+            // call will populate the cache with the authoritative result.
+            aRequiresForce = false;
+            bRequiresForce = false;
+            return false;
+        }
+
+        try
+        {
+            var ok = IsCompoundMadeOfTwoWords(word, 0, 0, word.Length, word, out aRequiresForce, out bRequiresForce);
+            _twoWordSimpleCache[word] = (ok, aRequiresForce, bRequiresForce);
+            return ok;
+        }
+        finally
+        {
+            _twoWordSimpleInProgress.Remove(word);
+        }
+    }
 
     private bool IsCompoundMadeOfTwoWords(string word, int wordCount, int startPos, int endPos, string fullWord, out bool aRequiresForce, out bool bRequiresForce)
     {
