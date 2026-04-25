@@ -710,7 +710,7 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("Arbeitsarbeitsarbeit")]
     [InlineData("Computerarbeitsarbeit")]
     [InlineData("Computerarbeits-Computer")]
-    [InlineData("computerarbeits-Computern")]
+    [InlineData("Computerarbeits-Computern")]
     public void GermanCompounding_GoodWords_Targeted(string word)
     {
         var aff = D("germancompounding", ".aff");
