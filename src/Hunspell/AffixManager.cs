@@ -123,6 +123,39 @@ internal sealed class AffixManager : IDisposable
     // duplication and ensures EvaluateAffixBaseCandidate can reuse it.
     private bool VariantHasFlag(string? variant, string? token) => !string.IsNullOrEmpty(variant) && !string.IsNullOrEmpty(token) && _hashManager.VariantContainsFlagAfterAppend(variant ?? string.Empty, null, token);
 
+    private enum CompoundPosition
+    {
+        Any,
+        Begin,
+        Middle,
+        End
+    }
+
+    private bool VariantMatchesCompoundPosition(string? variant, CompoundPosition position)
+    {
+        if (string.IsNullOrEmpty(variant))
+        {
+            return false;
+        }
+
+        bool hasCompound = VariantHasFlag(variant, _compoundFlag);
+        bool hasBegin = VariantHasFlag(variant, _compoundBegin);
+        bool hasMiddle = VariantHasFlag(variant, _compoundMiddle);
+        bool hasEnd = VariantHasFlag(variant, _compoundEnd);
+        bool hasOnlyInCompound = VariantHasFlag(variant, _onlyInCompound);
+
+        bool hasExplicitPosition = hasCompound || hasBegin || hasMiddle || hasEnd;
+        bool onlyAsFallback = hasOnlyInCompound && !hasExplicitPosition;
+
+        return position switch
+        {
+            CompoundPosition.Begin => hasBegin || hasCompound || onlyAsFallback,
+            CompoundPosition.Middle => hasMiddle || hasCompound || onlyAsFallback,
+            CompoundPosition.End => hasEnd || hasCompound || onlyAsFallback,
+            _ => hasCompound || onlyAsFallback
+        };
+    }
+
     private bool VariantsContainFlag(IEnumerable<string> variants, string? token)
         => VariantsContainFlagWithAppend(variants, null, token);
 
@@ -2616,7 +2649,7 @@ internal sealed class AffixManager : IDisposable
             // two components to the overall word count (so enforce COMPOUNDWORDMAX
             // correctly). Otherwise it contributes a single component.
             var contribution = 1;
-            if (IsCompoundMadeOfTwoWords(part, out var aInnerForce, out var bInnerForce))
+            if (IsCompoundMadeOfTwoWords(part, wordCount, position, i, word, out var aInnerForce, out var bInnerForce))
             {
                 contribution = 2;
                 // Only propagate a/b inner force when those inner components are at
@@ -2887,7 +2920,7 @@ internal sealed class AffixManager : IDisposable
                 matchKind = tempKind;
                 appendedFlag = tempAppended;
 
-                if (affixBase is not null && EvaluateAffixBaseCandidate(part, affixBase, matchKind, appendedFlag, wordCount, endPos, fullWord, out requiresForceUCase))
+                if (affixBase is not null && EvaluateAffixBaseCandidate(part, affixBase, matchKind, appendedFlag, wordCount, startPos, endPos, fullWord, out requiresForceUCase))
                 {
                     return true;
                 }
@@ -2916,7 +2949,7 @@ internal sealed class AffixManager : IDisposable
 
                         if (TryFindAffixBase(origBegin, true, out var replacementBase, out var replacementKind, out var replacementAppend, out _, out _, requiredCompoundFlags) &&
                             CandidateHasRequiredFlag(replacementBase ?? origBegin, replacementAppend, pattern.BeginFlag) &&
-                            EvaluateAffixBaseCandidate(part, replacementBase, replacementKind, replacementAppend, wordCount, endPos, fullWord, out requiresForceUCase))
+                            EvaluateAffixBaseCandidate(part, replacementBase, replacementKind, replacementAppend, wordCount, startPos, endPos, fullWord, out requiresForceUCase))
                         {
                             return true;
                         }
@@ -2939,7 +2972,7 @@ internal sealed class AffixManager : IDisposable
 
                             if (TryFindAffixBase(origEnd, true, out var replacementBase2, out var replacementKind2, out var replacementAppend2, out _, out _, requiredCompoundFlags) &&
                                 CandidateHasRequiredFlag(replacementBase2 ?? origEnd, replacementAppend2, pattern.EndFlag) &&
-                                EvaluateAffixBaseCandidate(part, replacementBase2, replacementKind2, replacementAppend2, wordCount, endPos, fullWord, out requiresForceUCase))
+                                EvaluateAffixBaseCandidate(part, replacementBase2, replacementKind2, replacementAppend2, wordCount, startPos, endPos, fullWord, out requiresForceUCase))
                         {
                             return true;
                         }
@@ -2975,7 +3008,7 @@ internal sealed class AffixManager : IDisposable
 
                                 if (TryFindAffixBase(augmentedPart, true, out var augmentedBase, out var augmentedKind, out var augmentedApp, out _, out _, requiredCompoundFlags) &&
                                     CandidateHasRequiredFlag(augmentedBase ?? augmentedPart, augmentedApp, pattern.BeginFlag) &&
-                                    EvaluateAffixBaseCandidate(augmentedPart, augmentedBase, augmentedKind, augmentedApp, wordCount, endPos, fullWord, out requiresForceUCase))
+                                    EvaluateAffixBaseCandidate(augmentedPart, augmentedBase, augmentedKind, augmentedApp, wordCount, startPos, endPos, fullWord, out requiresForceUCase))
                                 {
                                     return true;
                                 }
@@ -2987,7 +3020,7 @@ internal sealed class AffixManager : IDisposable
 
             if (flags is null)
             {
-                if (IsCompoundMadeOfTwoWords(part, out var aInnerPart, out var bInnerPart))
+                if (IsCompoundMadeOfTwoWords(part, wordCount, startPos, endPos, fullWord, out var aInnerPart, out var bInnerPart))
                 {
                     if ((aInnerPart && wordCount == 0) || (bInnerPart && endPos == fullWord.Length))
                     {
@@ -3021,6 +3054,13 @@ internal sealed class AffixManager : IDisposable
             return false;
         }
 
+        if (variants.Count > 0 &&
+            variants.All(v => (!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) ||
+                               (!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
+        {
+            return false;
+        }
+
         if (!string.IsNullOrEmpty(_forceUCaseFlag) && (wordCount == 0 || endPos == fullWord.Length) &&
             variants.Any(v => !string.IsNullOrEmpty(v) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forceUCaseFlag)))
         {
@@ -3032,14 +3072,12 @@ internal sealed class AffixManager : IDisposable
             if (_compoundBegin is not null)
             {
                 if (!variants.Any(v => !string.IsNullOrEmpty(v) &&
-                                       ((_compoundBegin is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundBegin)) ||
-                                        (_compoundFlag is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag)) ||
-                                        (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) &&
+                                       VariantMatchesCompoundPosition(v ?? string.Empty, CompoundPosition.Begin) &&
                                        !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) &&
                                        !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
                 {
                     if (TryFindAffixBase(affixPart, true, out var affixBasePos, out var affixKindPos, out var affixAppendPos, out _, out _, requiredCompoundFlags) &&
-                        EvaluateAffixBaseCandidate(part, affixBasePos, affixKindPos, affixAppendPos, wordCount, endPos, fullWord, out var affixForcePos))
+                        EvaluateAffixBaseCandidate(part, affixBasePos, affixKindPos, affixAppendPos, wordCount, startPos, endPos, fullWord, out var affixForcePos))
                     {
                         if (affixForcePos) requiresForceUCase = true;
                     }
@@ -3052,13 +3090,12 @@ internal sealed class AffixManager : IDisposable
             else if (_compoundFlag is not null)
             {
                 if (!variants.Any(v => !string.IsNullOrEmpty(v) &&
-                                       (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag) ||
-                                        (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) &&
+                                       VariantMatchesCompoundPosition(v ?? string.Empty, CompoundPosition.Any) &&
                                        !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) &&
                                        !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
                 {
                     if (TryFindAffixBase(affixPart, true, out var affixBasePos, out var affixKindPos, out var affixAppendPos, out _, out _, requiredCompoundFlags) &&
-                        EvaluateAffixBaseCandidate(part, affixBasePos, affixKindPos, affixAppendPos, wordCount, endPos, fullWord, out var affixForcePos))
+                        EvaluateAffixBaseCandidate(part, affixBasePos, affixKindPos, affixAppendPos, wordCount, startPos, endPos, fullWord, out var affixForcePos))
                     {
                         if (affixForcePos) requiresForceUCase = true;
                     }
@@ -3074,14 +3111,12 @@ internal sealed class AffixManager : IDisposable
             if (_compoundMiddle is not null)
             {
                 if (!variants.Any(v => !string.IsNullOrEmpty(v) &&
-                                       (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundMiddle) ||
-                                        (_compoundFlag is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag)) ||
-                                        (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) &&
+                                       VariantMatchesCompoundPosition(v ?? string.Empty, CompoundPosition.Middle) &&
                                        !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) &&
                                        !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
                 {
                     if (TryFindAffixBase(affixPart, true, out var affixBasePos, out var affixKindPos, out var affixAppendPos, out _, out _, requiredCompoundFlags) &&
-                        EvaluateAffixBaseCandidate(part, affixBasePos, affixKindPos, affixAppendPos, wordCount, endPos, fullWord, out var affixForcePos))
+                        EvaluateAffixBaseCandidate(part, affixBasePos, affixKindPos, affixAppendPos, wordCount, startPos, endPos, fullWord, out var affixForcePos))
                     {
                         if (affixForcePos) requiresForceUCase = true;
                     }
@@ -3094,13 +3129,12 @@ internal sealed class AffixManager : IDisposable
             else if (_compoundFlag is not null)
             {
                 if (!variants.Any(v => !string.IsNullOrEmpty(v) &&
-                                       (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag) ||
-                                        (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) &&
+                                       VariantMatchesCompoundPosition(v ?? string.Empty, CompoundPosition.Any) &&
                                        !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) &&
                                        !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
                 {
                     if (TryFindAffixBase(affixPart, true, out var affixBasePos, out var affixKindPos, out var affixAppendPos, out _, out _, requiredCompoundFlags) &&
-                        EvaluateAffixBaseCandidate(part, affixBasePos, affixKindPos, affixAppendPos, wordCount, endPos, fullWord, out var affixForcePos))
+                        EvaluateAffixBaseCandidate(part, affixBasePos, affixKindPos, affixAppendPos, wordCount, startPos, endPos, fullWord, out var affixForcePos))
                     {
                         if (affixForcePos) requiresForceUCase = true;
                     }
@@ -3116,14 +3150,12 @@ internal sealed class AffixManager : IDisposable
             if (_compoundEnd is not null)
             {
                 if (!variants.Any(v => !string.IsNullOrEmpty(v) &&
-                                       (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundEnd) ||
-                                        (_compoundFlag is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag)) ||
-                                        (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) &&
+                                       VariantMatchesCompoundPosition(v ?? string.Empty, CompoundPosition.End) &&
                                        !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) &&
                                        !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
                 {
                     if (TryFindAffixBase(affixPart, true, out var affixBasePos, out var affixKindPos, out var affixAppendPos, out _, out _, requiredCompoundFlags) &&
-                        EvaluateAffixBaseCandidate(part, affixBasePos, affixKindPos, affixAppendPos, wordCount, endPos, fullWord, out var affixForcePos))
+                        EvaluateAffixBaseCandidate(part, affixBasePos, affixKindPos, affixAppendPos, wordCount, startPos, endPos, fullWord, out var affixForcePos))
                     {
                         if (affixForcePos) requiresForceUCase = true;
                     }
@@ -3136,13 +3168,12 @@ internal sealed class AffixManager : IDisposable
             else if (_compoundFlag is not null)
             {
                 if (!variants.Any(v => !string.IsNullOrEmpty(v) &&
-                                       (_hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundFlag) ||
-                                        (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _onlyInCompound))) &&
+                                       VariantMatchesCompoundPosition(v ?? string.Empty, CompoundPosition.Any) &&
                                        !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _compoundForbidFlag)) &&
                                        !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(v ?? string.Empty, null, _forbiddenWordFlag))))
                 {
                     if (TryFindAffixBase(affixPart, true, out var affixBasePos, out var affixKindPos, out var affixAppendPos, out _, out _, requiredCompoundFlags) &&
-                        EvaluateAffixBaseCandidate(part, affixBasePos, affixKindPos, affixAppendPos, wordCount, endPos, fullWord, out var affixForcePos))
+                        EvaluateAffixBaseCandidate(part, affixBasePos, affixKindPos, affixAppendPos, wordCount, startPos, endPos, fullWord, out var affixForcePos))
                     {
                         if (affixForcePos) requiresForceUCase = true;
                     }
@@ -3157,13 +3188,18 @@ internal sealed class AffixManager : IDisposable
         // Ensure the part satisfies all required compound flags; if not, try deriving
         // an affix base that contributes the missing flags (e.g., COMPOUNDEND).
         var mergedVariants = variants.Select(v => _hashManager.MergeFlags(v ?? string.Empty, appendedFlag)).ToList();
+        var requiredPosition = wordCount == 0
+            ? CompoundPosition.Begin
+            : endPos < fullWord.Length
+                ? CompoundPosition.Middle
+                : CompoundPosition.End;
         bool meetsRequiredCompoundFlags = requiredCompoundFlags.Count == 0 ||
-                                          mergedVariants.Any(mv => requiredCompoundFlags.Any(cf => !string.IsNullOrEmpty(cf) && _hashManager.VariantContainsFlagAfterAppend(mv ?? string.Empty, null, cf)));
+                                          mergedVariants.Any(mv => !string.IsNullOrEmpty(mv) && VariantMatchesCompoundPosition(mv, requiredPosition));
 
         if (!meetsRequiredCompoundFlags)
         {
             if (TryFindAffixBase(affixPart, true, out var affixBasePos, out var affixKindPos, out var affixAppendPos, out _, out _, requiredCompoundFlags) &&
-                EvaluateAffixBaseCandidate(part, affixBasePos, affixKindPos, affixAppendPos, wordCount, endPos, fullWord, out var affixForcePos))
+                EvaluateAffixBaseCandidate(part, affixBasePos, affixKindPos, affixAppendPos, wordCount, startPos, endPos, fullWord, out var affixForcePos))
             {
                 if (affixForcePos) requiresForceUCase = true;
                 return true;
@@ -3250,13 +3286,13 @@ internal sealed class AffixManager : IDisposable
     /// replacement-derived candidates (which map back to an affix base)
     /// are checked consistently with directly discovered affix-bases.
     /// </summary>
-    private bool EvaluateAffixBaseCandidate(string surfacePart, string? affixBase, AffixMatchKind matchKind, string? appendedFlag, int wordCount, int endPos, string fullWord, out bool requiresForceUCase)
+    private bool EvaluateAffixBaseCandidate(string surfacePart, string? affixBase, AffixMatchKind matchKind, string? appendedFlag, int wordCount, int startPos, int endPos, string fullWord, out bool requiresForceUCase)
     {
         requiresForceUCase = false;
 
         // If the base itself is a small two-word compound, accept it. Avoid reentrancy
         // when already inside a two-word check to prevent runaway recursion.
-        if (_twoWordCheckDepth == 0 && affixBase is not null && IsCompoundMadeOfTwoWords(affixBase, out var aInnerAffix, out var bInnerAffix))
+        if (_twoWordCheckDepth == 0 && affixBase is not null && IsCompoundMadeOfTwoWords(affixBase, wordCount, startPos, endPos, fullWord, out var aInnerAffix, out var bInnerAffix))
         {
             if ((aInnerAffix && wordCount == 0) || (bInnerAffix && endPos == fullWord.Length)) requiresForceUCase = true;
             return true;
@@ -3342,46 +3378,40 @@ internal sealed class AffixManager : IDisposable
                 requiresForceUCase = true;
             }
 
+            var position = wordCount == 0
+                ? CompoundPosition.Begin
+                : endPos < fullWord.Length
+                    ? CompoundPosition.Middle
+                    : CompoundPosition.End;
+
             if (wordCount == 0)
             {
-                if (_compoundBegin is not null)
+                if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) &&
+                                            VariantMatchesCompoundPosition(m, position) &&
+                                            !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag)) &&
+                                            !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag))))
                 {
-                    if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (((_compoundBegin is not null && VariantHasFlag(m, _compoundBegin)) || (_compoundFlag is not null && VariantHasFlag(m, _compoundFlag)) || (_onlyInCompound is not null && VariantHasFlag(m, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag)))))
-                    {
-                        return true;
-                    }
-                }
-                else if (_compoundFlag is not null)
-                {
-                    if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && ((m.Contains(_compoundFlag)) || (_onlyInCompound is not null && m.Contains(_onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && m.Contains(_compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && m.Contains(_forbiddenWordFlag)))) return true;
+                    return true;
                 }
             }
             else if (endPos < fullWord.Length)
             {
-                if (_compoundMiddle is not null)
+                if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) &&
+                                            VariantMatchesCompoundPosition(m, position) &&
+                                            !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag)) &&
+                                            !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag))))
                 {
-                    if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (((_compoundMiddle is not null && VariantHasFlag(m, _compoundMiddle)) || (_compoundFlag is not null && VariantHasFlag(m, _compoundFlag)) || (_onlyInCompound is not null && VariantHasFlag(m, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag)))))
-                    {
-                        return true;
-                    }
-                }
-                else if (_compoundFlag is not null)
-                {
-                    if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (_hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundFlag) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _forbiddenWordFlag)))) return true;
+                    return true;
                 }
             }
             else
             {
-                if (_compoundEnd is not null)
+                if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) &&
+                                            VariantMatchesCompoundPosition(m, position) &&
+                                            !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag)) &&
+                                            !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag))))
                 {
-                    if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (((_compoundEnd is not null && VariantHasFlag(m, _compoundEnd)) || (_compoundFlag is not null && VariantHasFlag(m, _compoundFlag)) || (_onlyInCompound is not null && VariantHasFlag(m, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && VariantHasFlag(m, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && VariantHasFlag(m, _forbiddenWordFlag)))))
-                    {
-                        return true;
-                    }
-                }
-                else if (_compoundFlag is not null)
-                {
-                    if (mergedVariants.Any(m => !string.IsNullOrEmpty(m) && (_hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundFlag) || (_onlyInCompound is not null && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _onlyInCompound))) && !(!string.IsNullOrEmpty(_compoundForbidFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _compoundForbidFlag)) && !(!string.IsNullOrEmpty(_forbiddenWordFlag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, _forbiddenWordFlag)))) return true;
+                    return true;
                 }
             }
         }
@@ -4104,7 +4134,14 @@ internal sealed class AffixManager : IDisposable
             }
 
             var merged = baseVariants.Select(v => _hashManager.MergeFlags(v ?? string.Empty, appended)).ToList();
-            return merged.Any(m => requiredCompoundFlags.Any(flag => !string.IsNullOrEmpty(flag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, flag)));
+            var position = requiredCompoundFlags.Contains(_compoundBegin)
+                ? CompoundPosition.Begin
+                : requiredCompoundFlags.Contains(_compoundMiddle)
+                    ? CompoundPosition.Middle
+                    : requiredCompoundFlags.Contains(_compoundEnd)
+                        ? CompoundPosition.End
+                        : CompoundPosition.Any;
+            return merged.Any(m => !string.IsNullOrEmpty(m) && VariantMatchesCompoundPosition(m, position));
         }
 
         while (true)
@@ -4210,7 +4247,14 @@ internal sealed class AffixManager : IDisposable
             }
 
             var merged = baseVariants.Select(v => _hashManager.MergeFlags(v ?? string.Empty, appended)).ToList();
-            return merged.Any(m => requiredCompoundFlags.Any(flag => !string.IsNullOrEmpty(flag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, flag)));
+            var position = requiredCompoundFlags.Contains(_compoundBegin)
+                ? CompoundPosition.Begin
+                : requiredCompoundFlags.Contains(_compoundMiddle)
+                    ? CompoundPosition.Middle
+                    : requiredCompoundFlags.Contains(_compoundEnd)
+                        ? CompoundPosition.End
+                        : CompoundPosition.Any;
+            return merged.Any(m => !string.IsNullOrEmpty(m) && VariantMatchesCompoundPosition(m, position));
         }
 
         bool FailsPartialCircumfix(AffixMatchKind candidateKind, string? candidateAppended)
@@ -4962,6 +5006,9 @@ internal sealed class AffixManager : IDisposable
     /// provides a shallow nested-compound check without unbounded recursion.
     /// </summary>
     private bool IsCompoundMadeOfTwoWords(string word, out bool aRequiresForce, out bool bRequiresForce)
+        => IsCompoundMadeOfTwoWords(word, 0, 0, word.Length, word, out aRequiresForce, out bRequiresForce);
+
+    private bool IsCompoundMadeOfTwoWords(string word, int wordCount, int startPos, int endPos, string fullWord, out bool aRequiresForce, out bool bRequiresForce)
     {
         if (_twoWordCheckDepth > 16)
         {
@@ -4983,19 +5030,23 @@ internal sealed class AffixManager : IDisposable
                 var a = word.Substring(0, i);
                 var b = word.Substring(i);
 
-                // both pieces must be present in the dictionary
-                if (_hashManager.Lookup(a) && _hashManager.Lookup(b))
+                bool firstAvailable = _hashManager.Lookup(a) || TryFindAffixBase(a, allowBaseOnlyInCompound: true, out _, out _, out _, out _, out _);
+                bool secondAvailable = _hashManager.Lookup(b) || TryFindAffixBase(b, allowBaseOnlyInCompound: true, out _, out _, out _, out _, out _);
+
+                // both pieces must be present directly or derivable by affix rules
+                if (firstAvailable && secondAvailable)
                 {
                     // Validate that each subcomponent would be valid in the position it
                     // would occupy (first and last) and that the internal boundary
                     // obeys compound rules. This prevents allowing nested splits that
                     // violate COMPOUNDFLAG/position constraints (e.g., a first component
                     // without the required compound flag).
-                    if (!IsValidCompoundPart(a, 0, 0, i, word, out var aForce)) continue;
-                    if (!IsValidCompoundPart(b, 1, i, word.Length, word, out var bForce)) continue;
+                    var splitPos = startPos + i;
+                    if (!IsValidCompoundPart(a, wordCount, startPos, splitPos, fullWord, out var aForce)) continue;
+                    if (!IsValidCompoundPart(b, wordCount + 1, splitPos, endPos, fullWord, out var bForce)) continue;
 
                     // validate the internal boundary's compound rules
-                    if (CheckCompoundRules(word, i, word.Length, a, b))
+                    if (CheckCompoundRules(fullWord, splitPos, endPos, a, b))
                     {
                         // matched and valid
                         aRequiresForce = aForce;
@@ -5096,8 +5147,8 @@ internal sealed class AffixManager : IDisposable
     }
 
     /// <summary>
-    /// Get stems (base forms) for a word.
-    /// </summary>
+     /// Get stems (base forms) for a word.
+     /// </summary>
     internal void GetStems(string word, List<string> stems)
     {
         if (string.IsNullOrEmpty(word)) return;
