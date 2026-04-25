@@ -286,12 +286,12 @@ internal sealed class AffixManager : IDisposable
     /// </summary>
     public string? WordChars => _options.TryGetValue("WORDCHARS", out var wc) ? wc : null;
 
-    public AffixManager(string affixPath, HashManager hashManager)
+    public AffixManager(string affixPath, HashManager hashManager, string? preloadedContent = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(affixPath);
         _hashManager = hashManager ?? throw new ArgumentNullException(nameof(hashManager));
 
-        LoadAffix(affixPath);
+        LoadAffix(affixPath, preloadedContent);
 
         _suggestManager = new SuggestManager(_hashManager, this);
     }
@@ -305,100 +305,99 @@ internal sealed class AffixManager : IDisposable
     public static string? ReadDeclaredEncodingFromAffix(string affixPath)
     {
         if (string.IsNullOrEmpty(affixPath) || !File.Exists(affixPath)) return null;
-
-        try
-        {
-            // Read a small prefix of the file using UTF-8 which is safe for
-            // ASCII keywords like SET. We search for the SET directive.
-            using var sr = new StreamReader(File.OpenRead(affixPath), System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
-            string? line;
-            while ((line = sr.ReadLine()) is not null)
-            {
-                var trimmed = line.Trim();
-                if (trimmed.StartsWith("SET", StringComparison.OrdinalIgnoreCase))
-                {
-                    var parts = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                    if (parts.Length > 1) return parts[1];
-                }
-            }
-        }
-        catch
-        {
-            // be defensive; if anything goes wrong just return null so callers
-            // fall back to default detection heuristics
-        }
-        return null;
+        return ReadAffixContentAndEncoding(affixPath).EncodingHint;
     }
 
-    private void LoadAffix(string affixPath)
+    internal static (string Content, string? EncodingHint) ReadAffixContentAndEncoding(string affixPath)
     {
         if (!File.Exists(affixPath))
         {
             throw new FileNotFoundException($"Affix file not found: {affixPath}");
         }
 
-        // Read the affix file similarly to dictionary loading: prefer UTF-8
-        // but fall back to common legacy encodings if we detect replacement
-        // characters. This ensures REP / CHECKCOMPOUNDPATTERN entries that
-        // contain accented tokens are parsed correctly.
         System.Text.Encoding.RegisterProvider(System.Text.CodePagesEncodingProvider.Instance);
 
-        string? content = null;
+        using var stream = File.OpenRead(affixPath);
+        using var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        var initialContent = reader.ReadToEnd();
+        var encodingHint = ExtractDeclaredEncoding(initialContent);
 
-        // Try to use the declared encoding first
-        var declaredEncName = ReadDeclaredEncodingFromAffix(affixPath);
-        if (!string.IsNullOrEmpty(declaredEncName))
+        if (!string.IsNullOrEmpty(encodingHint))
         {
             try
             {
-                var norm = declaredEncName;
-                if (norm.Length > 3 && norm.StartsWith("ISO", StringComparison.OrdinalIgnoreCase) && char.IsDigit(norm[3]))
-                {
-                    norm = "ISO-" + norm.Substring(3);
-                }
-                norm = norm.Replace('_', '-');
-
-                var enc = System.Text.Encoding.GetEncoding(norm);
-                using var stream = File.OpenRead(affixPath);
-                // Disable BOM detection to ensure we strictly use the declared encoding
-                using var reader = new StreamReader(stream, enc, detectEncodingFromByteOrderMarks: false);
-                content = reader.ReadToEnd();
+                using var declaredStream = File.OpenRead(affixPath);
+                using var declaredReader = new StreamReader(declaredStream, System.Text.Encoding.GetEncoding(encodingHint), detectEncodingFromByteOrderMarks: false);
+                return (declaredReader.ReadToEnd(), encodingHint);
             }
-            catch (Exception ex)
+            catch
             {
-                Console.WriteLine($"DEBUG: LoadAffix failed to use declared encoding: {ex.Message}");
             }
         }
 
-        if (content == null)
+        if (!initialContent.Contains('\uFFFD'))
         {
-            using (var stream = File.OpenRead(affixPath))
-            using (var reader = new StreamReader(stream, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: true))
-            {
-                content = reader.ReadToEnd();
-            }
+            return (initialContent, encodingHint);
+        }
 
-            if (content.Contains('\uFFFD'))
+        var fallbacks = new[] { 1250, 28592, 1252, 28591, 28605 };
+        foreach (var cp in fallbacks)
+        {
+            try
             {
-                var fallbacks = new[] { 1250, 28592, 1252, 28591, 28605 };
-                foreach (var cp in fallbacks)
+                using var fallbackStream = File.OpenRead(affixPath);
+                using var fallbackReader = new StreamReader(fallbackStream, System.Text.Encoding.GetEncoding(cp), detectEncodingFromByteOrderMarks: false);
+                var fallbackContent = fallbackReader.ReadToEnd();
+                if (!fallbackContent.Contains('\uFFFD'))
                 {
-                    try
-                    {
-                        var enc = System.Text.Encoding.GetEncoding(cp);
-                        using var stream = File.OpenRead(affixPath);
-                        using var reader = new StreamReader(stream, enc, detectEncodingFromByteOrderMarks: false);
-                        var attempt = reader.ReadToEnd();
-                        if (!attempt.Contains('\uFFFD'))
-                        {
-                            content = attempt;
-                            break;
-                        }
-                    }
-                    catch { }
+                    return (fallbackContent, ExtractDeclaredEncoding(fallbackContent) ?? encodingHint);
                 }
             }
+            catch
+            {
+            }
         }
+
+        return (initialContent, encodingHint);
+    }
+
+    private static string? ExtractDeclaredEncoding(string content)
+    {
+        using var sr = new StringReader(content);
+        while (sr.ReadLine() is { } line)
+        {
+            var trimmed = line.Trim();
+            if (!trimmed.StartsWith("SET", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var parts = trimmed.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length > 1)
+            {
+                var encoding = parts[1];
+                if (encoding.Length > 3 &&
+                    encoding.StartsWith("ISO", StringComparison.OrdinalIgnoreCase) &&
+                    char.IsDigit(encoding[3]))
+                {
+                    encoding = "ISO-" + encoding[3..];
+                }
+
+                return encoding.Replace('_', '-');
+            }
+        }
+
+        return null;
+    }
+
+    private void LoadAffix(string affixPath, string? preloadedContent = null)
+    {
+        if (!File.Exists(affixPath))
+        {
+            throw new FileNotFoundException($"Affix file not found: {affixPath}");
+        }
+
+        var content = preloadedContent ?? ReadAffixContentAndEncoding(affixPath).Content;
 
         string? line;
         using var sr = new StringReader(content);
@@ -3158,16 +3157,8 @@ internal sealed class AffixManager : IDisposable
         // Ensure the part satisfies all required compound flags; if not, try deriving
         // an affix base that contributes the missing flags (e.g., COMPOUNDEND).
         var mergedVariants = variants.Select(v => _hashManager.MergeFlags(v ?? string.Empty, appendedFlag)).ToList();
-        var positionalRequiredFlags = requiredCompoundFlags
-            .Where(cf => !string.IsNullOrEmpty(cf) && cf != _onlyInCompound)
-            .ToList();
         bool meetsRequiredCompoundFlags = requiredCompoundFlags.Count == 0 ||
-                                          mergedVariants.Any(mv =>
-                                              positionalRequiredFlags.Count > 0
-                                                  ? positionalRequiredFlags.Any(cf => _hashManager.VariantContainsFlagAfterAppend(mv ?? string.Empty, null, cf))
-                                                  : !string.IsNullOrEmpty(_onlyInCompound) &&
-                                                    requiredCompoundFlags.Contains(_onlyInCompound) &&
-                                                    _hashManager.VariantContainsFlagAfterAppend(mv ?? string.Empty, null, _onlyInCompound));
+                                          mergedVariants.Any(mv => requiredCompoundFlags.Any(cf => !string.IsNullOrEmpty(cf) && _hashManager.VariantContainsFlagAfterAppend(mv ?? string.Empty, null, cf)));
 
         if (!meetsRequiredCompoundFlags)
         {
@@ -4113,23 +4104,7 @@ internal sealed class AffixManager : IDisposable
             }
 
             var merged = baseVariants.Select(v => _hashManager.MergeFlags(v ?? string.Empty, appended)).ToList();
-
-            bool HasFlag(string flag) => merged.Any(m => _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, flag));
-
-            var onlyInCompoundFlag = _onlyInCompound;
-            var positionalFlags = requiredCompoundFlags.Where(f => !string.IsNullOrEmpty(f) && f != onlyInCompoundFlag).ToList();
-
-            if (positionalFlags.Count > 0)
-            {
-                return positionalFlags.Any(HasFlag);
-            }
-
-            if (!string.IsNullOrEmpty(onlyInCompoundFlag) && requiredCompoundFlags.Contains(onlyInCompoundFlag))
-            {
-                return HasFlag(onlyInCompoundFlag);
-            }
-
-            return true;
+            return merged.Any(m => requiredCompoundFlags.Any(flag => !string.IsNullOrEmpty(flag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, flag)));
         }
 
         while (true)
@@ -4235,23 +4210,7 @@ internal sealed class AffixManager : IDisposable
             }
 
             var merged = baseVariants.Select(v => _hashManager.MergeFlags(v ?? string.Empty, appended)).ToList();
-
-            bool HasFlag(string flag) => merged.Any(m => _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, flag));
-
-            var onlyInCompoundFlag = _onlyInCompound;
-            var positionalFlags = requiredCompoundFlags.Where(f => !string.IsNullOrEmpty(f) && f != onlyInCompoundFlag).ToList();
-
-            if (positionalFlags.Count > 0)
-            {
-                return positionalFlags.Any(HasFlag);
-            }
-
-            if (!string.IsNullOrEmpty(onlyInCompoundFlag) && requiredCompoundFlags.Contains(onlyInCompoundFlag))
-            {
-                return HasFlag(onlyInCompoundFlag);
-            }
-
-            return true;
+            return merged.Any(m => requiredCompoundFlags.Any(flag => !string.IsNullOrEmpty(flag) && _hashManager.VariantContainsFlagAfterAppend(m ?? string.Empty, null, flag)));
         }
 
         bool FailsPartialCircumfix(AffixMatchKind candidateKind, string? candidateAppended)

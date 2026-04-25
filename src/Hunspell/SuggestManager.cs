@@ -491,6 +491,19 @@ internal sealed class SuggestManager
                 }
             }
 
+            if (suggestions.Count < 10 && _hashManager.WordCount <= 5_000)
+            {
+                foreach (var w in _hashManager.GetAllWords())
+                {
+                    if (suggestions.Count >= 10) break;
+                    if (string.IsNullOrEmpty(w)) continue;
+                    if (w.EndsWith(right, StringComparison.OrdinalIgnoreCase))
+                    {
+                        TryAddSuggestion(suggestions, seenSuggestions, w);
+                    }
+                }
+            }
+
             if (suggestions.Count < 10 && _hashManager.Lookup(left))
             {
                 var normalizedRight = right;
