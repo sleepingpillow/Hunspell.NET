@@ -35,7 +35,12 @@ namespace Hunspell.Tests
             var rulesOk = (bool)ruleMethod!.Invoke(af, new object?[] { "glassko", 5, 8, "glass", "sko" })!;
             Console.WriteLine($"CheckCompoundRules('glassko', prevEnd=5) => {rulesOk}");
 
-            var compOfTwo = af.GetType().GetMethod("IsCompoundMadeOfTwoWords", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            var compOfTwo = af.GetType().GetMethod(
+                "IsCompoundMadeOfTwoWords",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance,
+                binder: null,
+                new[] { typeof(string), typeof(bool).MakeByRefType(), typeof(bool).MakeByRefType() },
+                modifiers: null);
             var glassCompArgs = new object?[] { "glass", false, false };
             var glassIsComp = (bool)compOfTwo!.Invoke(af, glassCompArgs)!;
             var skoCompArgs = new object?[] { "sko", false, false };

@@ -135,7 +135,7 @@ public class UpstreamAffixAndCompoundTests
     // Bug tracker tests requiring specific fixes:
     [InlineData("1592880")]        // re-enable: homonym handling test
     // [InlineData("1975530")]        // FAILING: Arabic encoding issue (mojibake)
-    // [InlineData("2999225")]        // FAILING: Bug tracker test (no test data)
+    [InlineData("2999225")]        // re-enable: bug tracker case
     //
     // CHECKSHARPS feature (German ß handling):
     [InlineData("checksharps")]    // FAILING: CHECKSHARPS not implemented
@@ -175,9 +175,9 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("hu")]   // FAILING: Hungarian language features
     //
     // ICONV/OCONV (input/output conversion):
-    // [InlineData("iconv")]     // FAILING: ICONV not implemented
-    // [InlineData("iconv2")]    // FAILING: ICONV not implemented
-    // [InlineData("oconv2")]    // FAILING: OCONV edge cases
+    [InlineData("iconv")]     // re-enable: ICONV single-pass conversion
+    [InlineData("iconv2")]    // re-enable: ICONV longest-match conversion
+    [InlineData("oconv2")]    // re-enable: ICONV/OCONV conversion edge case
     //    //
     // Bug tracker tests:
     [InlineData("i53643")]  // re-enable: bug tracker case
@@ -191,8 +191,8 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("morph")]   // FAILING: Morphological analysis not implemented
     //
     // NEEDAFFIX advanced cases:
-    // [InlineData("needaffix2")]  // FAILING: Advanced NEEDAFFIX handling
-    // [InlineData("needaffix4")]  // FAILING: Advanced NEEDAFFIX handling
+    [InlineData("needaffix2")]  // re-enable: Advanced NEEDAFFIX handling
+    [InlineData("needaffix4")]  // re-enable: Advanced NEEDAFFIX handling
     [InlineData("needaffix5")]  // FAILING: Advanced NEEDAFFIX handling
     //
     // Language-specific tests:
@@ -625,7 +625,7 @@ public class UpstreamAffixAndCompoundTests
     //
     // Bug tracker tests:
     [InlineData("1706659")]  // re-enable: bug tracker case
-    // [InlineData("2970242")]  // FAILING: Bug tracker test (wrong word accepted)
+    [InlineData("2970242")]  // re-enable: bug tracker case
     //
     // CHECKCOMPOUNDPATTERN issues:
     [InlineData("checkcompoundpattern3")]
@@ -710,7 +710,7 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("Arbeitsarbeitsarbeit")]
     [InlineData("Computerarbeitsarbeit")]
     [InlineData("Computerarbeits-Computer")]
-    [InlineData("computerarbeits-Computern")]
+    [InlineData("Computerarbeits-Computern")]
     public void GermanCompounding_GoodWords_Targeted(string word)
     {
         var aff = D("germancompounding", ".aff");

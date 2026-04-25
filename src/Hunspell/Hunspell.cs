@@ -29,13 +29,9 @@ public sealed class HunspellSpellChecker : IDisposable
 
         try
         {
-            // Read declared encoding from affix (if present) so the dictionary
-            // can be read using the correct encoding. Many upstream tests put
-            // SET <encoding> into the .aff file and the dictionary needs that
-            // information to decode correctly.
-            var encodingHint = AffixManager.ReadDeclaredEncodingFromAffix(affixPath);
+            var (affixContent, encodingHint) = AffixManager.ReadAffixContentAndEncoding(affixPath);
             _hashManager = new HashManager(dictionaryPath, encodingHint);
-            _affixManager = new AffixManager(affixPath, _hashManager);
+            _affixManager = new AffixManager(affixPath, _hashManager, affixContent);
         }
         catch
         {

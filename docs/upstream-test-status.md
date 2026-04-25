@@ -19,6 +19,9 @@ This document tracks the status of Hunspell.NET's compatibility with the upstrea
 ## Latest Updates (Session)
 
 ### Recently Fixed
+- ✅ **ICONV/OCONV parity** - Replaced breadth-first ICONV expansion with upstream-style single-pass longest-match conversion.
+- ✅ **NEEDAFFIX advanced** - Re-enabled `needaffix2` and `needaffix4`.
+- ✅ **Bug tracker cases** - Re-enabled `2970242` wrong-word coverage and `2999225`.
 - ✅ **CHECKCOMPOUNDPATTERN** - Fully implemented pattern matching with replacements and flags.
 - ✅ **COMPLEXPREFIXES** - Verified RTL prefix handling.
 - ✅ **ALIAS3** - Advanced alias handling.
@@ -93,9 +96,9 @@ The following upstream test categories are fully passing:
 The following test categories are not yet fully implemented:
 
 #### ICONV/OCONV (Character Conversion)
-- ❌ `iconv` - Input character conversion
-- ❌ `iconv2` - Advanced input conversion
-- ❌ `oconv2` - Output conversion edge cases
+- ✅ `iconv` - Input character conversion
+- ✅ `iconv2` - Advanced input conversion
+- ✅ `oconv2` - Output conversion edge cases
 
 #### German Compounding
 - ❌ `germancompounding` - German compound word rules
@@ -115,8 +118,8 @@ The following test categories are not yet fully implemented:
 - ❌ `simplifiedtriple` - SIMPLIFIEDTRIPLE directive
 
 #### NEEDAFFIX Advanced
-- ❌ `needaffix2` - Advanced NEEDAFFIX handling
-- ❌ `needaffix4` - Advanced NEEDAFFIX handling
+- ✅ `needaffix2` - Advanced NEEDAFFIX handling
+- ✅ `needaffix4` - Advanced NEEDAFFIX handling
 
 #### Other Language-Specific
 - ❌ `nepali` - Nepali language features
@@ -127,8 +130,8 @@ The following test categories are not yet fully implemented:
 - ✅ `i58202` - Case sensitivity validation (FIXED: Weird mixed-case like "fOO" properly rejected)
 - ❌ `1706659` - Specific bug fix
 - ❌ `1975530` - Specific bug fix
-- ❌ `2970242` - Specific bug fix
-- ❌ `2999225` - Specific bug fix
+- ✅ `2970242` - Specific bug fix
+- ✅ `2999225` - Specific bug fix
 - ❌ `i53643` - Bug tracker issue
 - ❌ `i54633` - Bug tracker issue
 - ❌ `i54980` - Bug tracker issue
