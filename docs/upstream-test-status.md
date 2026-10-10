@@ -118,7 +118,7 @@ The following test categories are not yet fully implemented:
 - ✅ `alias3` - Advanced alias handling
 - ✅ `conditionalprefix` - Conditional prefix application
 - ❌ `encoding` - Non-UTF8 encoding handling
-- ❌ `fogemorpheme` - FOGEMORPHEME directive
+- ✅ `fogemorpheme` - FOGEMORPHEME negative fixture coverage
 - ❌ `ignoresug` - IGNORESUG directive
 - ❌ `morph` - Morphological analysis
 - ❌ `simplifiedtriple` - SIMPLIFIEDTRIPLE directive
