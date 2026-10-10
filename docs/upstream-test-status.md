@@ -14,7 +14,9 @@ This document tracks the status of Hunspell.NET's compatibility with the upstrea
 | Nested Specialty Tests | 49 | 0 | 49 | 100% |
 | **Total** | **268** | **25** | **293** | **91%** |
 
-*268 tests are passing. The 25 commented-out tests represent features not yet fully implemented.*
+*The category totals above are retained for historical comparison with the
+earlier parity report. The current upstream harness has since been expanded;
+run the harness before publishing a new parity percentage.*
 
 ## Latest Updates (Session)
 
@@ -32,10 +34,16 @@ This document tracks the status of Hunspell.NET's compatibility with the upstrea
 - ✅ **i58202** - Case sensitivity validation now working.
 - ✅ **condition** - Fixed encoding and empty affix stripping logic.
 - ✅ **needaffix5** - Fixed recursive NEEDAFFIX logic.
+- ✅ **compoundaffix3** - Re-enabled upstream wrong-word coverage.
+- ✅ **needaffix3** - Re-enabled upstream affix-restriction coverage.
 
 ### Current Status
-- **268 passing upstream tests** (91%)
-- **0 failing active tests**
+- The former **268/293 (91%)** total is a historical snapshot, not the current
+  parity figure.
+- Active upstream coverage for FLAG types, CHECKSHARPS,
+  CHECKCOMPOUNDPATTERN, ICONV/OCONV, and FOGEMORPHEME is enabled.
+- The current focused regression run passes; recalculate category totals before
+  reporting a new percentage.
 
 ## Test Categories
 
@@ -48,6 +56,7 @@ The following upstream test categories are fully passing:
 - ✅ Affix handling (`alias`, `alias2`, `fullstrip`, `zeroaffix`)
 - ✅ FLAG types (`flag`, `flaglong`, `flagnum`, `flagutf8`)
 - ✅ Case handling (`allcaps`, `allcaps2`, `allcaps3`, `allcaps_utf`, `keepcase`, `checksharps`, `checksharpsutf`)
+- ✅ CHECKSHARPS suggestions (`checksharps.sug`, `checksharpsutf.sug`)
 - ✅ Compound words (`compoundflag`, `compoundforbid`, `compoundaffix`, `compoundaffix2`, `compoundaffix3`)
 - ✅ COMPOUNDRULE (`compoundrule` through `compoundrule8`)
 - ✅ Break patterns (`break`, `breakdefault`, `breakoff`)
@@ -112,7 +121,7 @@ The following test categories are not yet fully implemented:
 - ✅ `alias3` - Advanced alias handling
 - ✅ `conditionalprefix` - Conditional prefix application
 - ❌ `encoding` - Non-UTF8 encoding handling
-- ❌ `fogemorpheme` - FOGEMORPHEME directive
+- ✅ `fogemorpheme` - FOGEMORPHEME negative fixture coverage
 - ❌ `ignoresug` - IGNORESUG directive
 - ❌ `morph` - Morphological analysis
 - ❌ `simplifiedtriple` - SIMPLIFIEDTRIPLE directive
@@ -144,22 +153,23 @@ The following test categories are not yet fully implemented:
 - ❌ `opentaal_cpdpat2` - OpenTaal compound pattern
 - ✅ `opentaal_keepcase` - OpenTaal keepcase handling
 
-## Priority Areas for Implementation
+## Remaining Priority Areas
 
-Based on the failing tests, the following areas should be prioritized for implementation:
+Based on the remaining commented-out tests, the following areas should be
+prioritized for implementation:
 
 ### High Priority
-1. **CHECKCOMPOUNDPATTERN** - Needed for advanced compound word validation
-2. **ICONV/OCONV** - Character conversion for non-UTF8 dictionaries
-3. **German Compounding** - Full German compound word support
+1. **FOGEMORPHEME** - Complete negative fixture and ONLYINCOMPOUND parity
+2. **German Compounding** - Full German compound word support
+3. **Remaining language-specific and bug-tracker cases**
 
 ### Medium Priority
-1. **COMPLEXPREFIXES** - Right-to-left language support
+1. **Remaining COMPLEXPREFIXES edge cases** - Right-to-left language support
 2. **Advanced NEEDAFFIX** - Complex NEEDAFFIX scenarios
 
 ### Lower Priority
 1. **Morphological Analysis** - Word form analysis
-2. **FOGEMORPHEME** - Morpheme boundaries
+2. **Suggestion parity for CHECKSHARPS** - Verify `.sug` fixtures
 3. **SIMPLIFIEDTRIPLE** - Triple letter simplification
 4. **Language-specific fixes** - Hungarian, Nepali, etc.
 

@@ -33,11 +33,11 @@ Detailed implementation plan for remaining compound word features:
 
 ### [Upstream Test Status](upstream-test-status.md)
 Status of compatibility with the upstream Hunspell test suite:
-- Overall: 75% of upstream tests passing (193/257)
-- All 193 active tests passing
-- 64 tests commented out (features not yet implemented)
-- Detailed breakdown by feature category
-- Priority areas for implementation
+- The former 75% (193/257) figure is the PR #14 baseline and is no longer current.
+- FLAG types, CHECKSHARPS, CHECKCOMPOUNDPATTERN, and ICONV/OCONV have active
+  coverage in the current harness.
+- The current upstream harness run is tracked separately from unsupported,
+  commented-out cases; update the detailed status after any parity change.
 
 ## Quick Links
 
