@@ -54,6 +54,7 @@ The following upstream test categories are fully passing:
 - ✅ Affix handling (`alias`, `alias2`, `fullstrip`, `zeroaffix`)
 - ✅ FLAG types (`flag`, `flaglong`, `flagnum`, `flagutf8`)
 - ✅ Case handling (`allcaps`, `allcaps2`, `allcaps3`, `allcaps_utf`, `keepcase`, `checksharps`, `checksharpsutf`)
+- ✅ CHECKSHARPS suggestions (`checksharps.sug`, `checksharpsutf.sug`)
 - ✅ Compound words (`compoundflag`, `compoundforbid`, `compoundaffix`, `compoundaffix2`, `compoundaffix3`)
 - ✅ COMPOUNDRULE (`compoundrule` through `compoundrule8`)
 - ✅ Break patterns (`break`, `breakdefault`, `breakoff`)
