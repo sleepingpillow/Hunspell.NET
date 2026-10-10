@@ -644,7 +644,7 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("conditionalprefix")]  // FAILING: Conditional prefix restrictions
     //
     // FOGEMORPHEME feature:
-    // [InlineData("fogemorpheme")]  // FAILING: FOGEMORPHEME not implemented
+    [InlineData("fogemorpheme")]  // re-enabled: negative fixture coverage
     //
     // German compounding:
     [InlineData("germancompounding")]     // FAILING: German compound restrictions
