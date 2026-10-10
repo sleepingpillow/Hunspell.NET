@@ -660,7 +660,7 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("i68568utf")]  // FAILING: Bug tracker test
     //
     // NEEDAFFIX advanced:
-    // [InlineData("needaffix3")]  // FAILING: Advanced NEEDAFFIX restrictions
+    [InlineData("needaffix3")]
     [InlineData("needaffix5")]
     //
     // N-gram UTF-8:
