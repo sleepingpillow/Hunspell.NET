@@ -635,7 +635,7 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("circumfix")]  // re-enabled: CIRCUMFIX now enforced
     //
     // Compound affix advanced cases:
-    // [InlineData("compoundaffix3")]  // FAILING: Complex compound affix rules
+    [InlineData("compoundaffix3")]
     //
     // COMPLEXPREFIXES feature:
     [InlineData("complexprefixes")]
@@ -667,7 +667,7 @@ public class UpstreamAffixAndCompoundTests
     // [InlineData("ngram_utf_fix")]  // FAILING: N-gram UTF-8 handling
     //
     // ONLYINCOMPOUND advanced:
-    // [InlineData("onlyincompound2")]  // FAILING: Advanced ONLYINCOMPOUND
+    // [InlineData("onlyincompound2")]  // FAILING: compound pattern flag semantics
     //
     // OpenTaal compound patterns:
     [InlineData("opentaal_cpdpat")]
