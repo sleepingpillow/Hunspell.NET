@@ -14,7 +14,9 @@ This document tracks the status of Hunspell.NET's compatibility with the upstrea
 | Nested Specialty Tests | 49 | 0 | 49 | 100% |
 | **Total** | **268** | **25** | **293** | **91%** |
 
-*268 tests are passing. The 25 commented-out tests represent features not yet fully implemented.*
+*The category totals above are retained for historical comparison with the
+earlier parity report. The current upstream harness has since been expanded;
+run the harness before publishing a new parity percentage.*
 
 ## Latest Updates (Session)
 
@@ -34,8 +36,12 @@ This document tracks the status of Hunspell.NET's compatibility with the upstrea
 - ✅ **needaffix5** - Fixed recursive NEEDAFFIX logic.
 
 ### Current Status
-- **268 passing upstream tests** (91%)
-- **0 failing active tests**
+- The former **268/293 (91%)** total is a historical snapshot, not the current
+  parity figure.
+- Active upstream coverage for FLAG types, CHECKSHARPS,
+  CHECKCOMPOUNDPATTERN, ICONV/OCONV, and FOGEMORPHEME is enabled.
+- The current focused regression run passes; recalculate category totals before
+  reporting a new percentage.
 
 ## Test Categories
 
@@ -144,22 +150,23 @@ The following test categories are not yet fully implemented:
 - ❌ `opentaal_cpdpat2` - OpenTaal compound pattern
 - ✅ `opentaal_keepcase` - OpenTaal keepcase handling
 
-## Priority Areas for Implementation
+## Remaining Priority Areas
 
-Based on the failing tests, the following areas should be prioritized for implementation:
+Based on the remaining commented-out tests, the following areas should be
+prioritized for implementation:
 
 ### High Priority
-1. **CHECKCOMPOUNDPATTERN** - Needed for advanced compound word validation
-2. **ICONV/OCONV** - Character conversion for non-UTF8 dictionaries
-3. **German Compounding** - Full German compound word support
+1. **FOGEMORPHEME** - Complete negative fixture and ONLYINCOMPOUND parity
+2. **German Compounding** - Full German compound word support
+3. **Remaining language-specific and bug-tracker cases**
 
 ### Medium Priority
-1. **COMPLEXPREFIXES** - Right-to-left language support
+1. **Remaining COMPLEXPREFIXES edge cases** - Right-to-left language support
 2. **Advanced NEEDAFFIX** - Complex NEEDAFFIX scenarios
 
 ### Lower Priority
 1. **Morphological Analysis** - Word form analysis
-2. **FOGEMORPHEME** - Morpheme boundaries
+2. **Suggestion parity for CHECKSHARPS** - Verify `.sug` fixtures
 3. **SIMPLIFIEDTRIPLE** - Triple letter simplification
 4. **Language-specific fixes** - Hungarian, Nepali, etc.
 

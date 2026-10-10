@@ -19,7 +19,8 @@ namespace Hunspell.Tests;
 /// - Suggestions tests: 6 active
 /// - Nested specialty tests: 36 active (various compound/pattern tests)
 /// - Total active in this file: 233 tests (all passing)
-/// - Total commented out: 60 tests (features not yet implemented)
+/// - The active upstream cases below are expected to pass; commented cases are
+///   retained only for unsupported or not-yet-verified behavior.
 ///
 /// Note: The test project also includes 139 other tests in separate test files.
 ///
@@ -130,7 +131,7 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("wordpair")]
     [InlineData("zeroaffix")]
     //
-    // FAILING TESTS - Commented out (features not yet implemented):
+    // Additional active upstream coverage:
     //
     // Bug tracker tests requiring specific fixes:
     [InlineData("1592880")]        // re-enable: homonym handling test
@@ -138,11 +139,11 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("2999225")]        // re-enable: bug tracker case
     //
     // CHECKSHARPS feature (German ß handling):
-    [InlineData("checksharps")]    // FAILING: CHECKSHARPS not implemented
-    [InlineData("checksharpsutf")] // FAILING: CHECKSHARPS not implemented
+    [InlineData("checksharps")]
+    [InlineData("checksharpsutf")]
     //
     // CHECKCOMPOUNDPATTERN feature:
-    [InlineData("checkcompoundcase2")]     // FAILING: Advanced compound case handling
+    [InlineData("checkcompoundcase2")]
     [InlineData("checkcompoundpattern")]
     [InlineData("checkcompoundpattern2")]
     [InlineData("checkcompoundpattern3")]
@@ -155,20 +156,20 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("complexprefixesutf")]
     //
     // Advanced affix condition handling:
-    [InlineData("affixes")]            // FAILING: Advanced affix conditions
-    [InlineData("alias3")]             // FAILING: Advanced alias handling
-    [InlineData("condition")]          // FAILING: Advanced condition matching
-    [InlineData("conditionalprefix")]  // FAILING: Conditional prefix application
+    [InlineData("affixes")]
+    [InlineData("alias3")]
+    [InlineData("condition")]
+    [InlineData("conditionalprefix")]
     //
     // FLAG types (long/num/utf8):
-    [InlineData("encoding")]   // FAILING: Non-UTF8 encoding handling
+    [InlineData("encoding")]
     [InlineData("flag")]
     [InlineData("flaglong")]
     [InlineData("flagnum")]
     [InlineData("flagutf8")]
     //
     // German compounding:
-    [InlineData("germancompounding")]     // FAILING: German compounding rules
+    [InlineData("germancompounding")]
     // [InlineData("germancompoundingold")]  // FAILING: Old German compounding rules
     //
     // Hungarian-specific tests:
@@ -621,7 +622,7 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("utfcompound")]
     [InlineData("wordpair")]
     //
-    // FAILING TESTS - Commented out (features not yet implemented):
+    // Additional active upstream coverage:
     //
     // Bug tracker tests:
     [InlineData("1706659")]  // re-enable: bug tracker case
@@ -647,20 +648,20 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("fogemorpheme")]  // re-enabled: negative fixture coverage
     //
     // German compounding:
-    [InlineData("germancompounding")]     // FAILING: German compound restrictions
-    [InlineData("germancompoundingold")]  // FAILING: Old German compound restrictions
+    [InlineData("germancompounding")]
+    [InlineData("germancompoundingold")]
     //
     // Hungarian-specific:
     // [InlineData("hu")]  // FAILING: Hungarian restrictions
     //
     // Bug tracker tests:
-    [InlineData("i58202")]     // FAILING: Bug tracker test
+    [InlineData("i58202")]
     // [InlineData("i68568")]     // FAILING: Bug tracker test
     // [InlineData("i68568utf")]  // FAILING: Bug tracker test
     //
     // NEEDAFFIX advanced:
     // [InlineData("needaffix3")]  // FAILING: Advanced NEEDAFFIX restrictions
-    [InlineData("needaffix5")]  // FAILING: Advanced NEEDAFFIX restrictions
+    [InlineData("needaffix5")]
     //
     // N-gram UTF-8:
     // [InlineData("ngram_utf_fix")]  // FAILING: N-gram UTF-8 handling
