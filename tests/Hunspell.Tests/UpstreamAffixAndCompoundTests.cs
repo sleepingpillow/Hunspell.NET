@@ -967,6 +967,8 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("alias")]
     [InlineData("fullstrip")]
     [InlineData("wordpair")]
+    [InlineData("checksharps")]
+    [InlineData("checksharpsutf")]
     public void UpstreamSuggestions_ShouldContainExpected(string baseName)
     {
         var aff = D(baseName, ".aff");
