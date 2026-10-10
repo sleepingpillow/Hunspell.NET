@@ -34,6 +34,7 @@ run the harness before publishing a new parity percentage.*
 - ✅ **i58202** - Case sensitivity validation now working.
 - ✅ **condition** - Fixed encoding and empty affix stripping logic.
 - ✅ **needaffix5** - Fixed recursive NEEDAFFIX logic.
+- ✅ **compoundaffix3** - Re-enabled upstream wrong-word coverage.
 
 ### Current Status
 - The former **268/293 (91%)** total is a historical snapshot, not the current
