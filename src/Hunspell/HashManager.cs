@@ -686,7 +686,7 @@ internal sealed class HashManager : IDisposable
             // .Contains(flag) checks. For multi-character flag formats (Long/Num)
             // we'll return a comma-separated list of tokens. For Single/UTF8
             // we'll return a concatenated string of unique characters/runes.
-            var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var tokens = new HashSet<string>(StringComparer.Ordinal);
             foreach (var e in entries)
             {
                 var f = ExpandAliasFlags(e.Flags);
@@ -878,7 +878,7 @@ internal sealed class HashManager : IDisposable
     public string MergeFlags(string baseFlagsSerialized, string? appendedFlagsRaw)
     {
         // Represent tokens as a set for de-duplication
-        var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var tokens = new HashSet<string>(StringComparer.Ordinal);
 
         // helper to add tokens depending on current format
         void addTokensFromSerialized(string s)
@@ -940,7 +940,7 @@ internal sealed class HashManager : IDisposable
         var expandedAppended = ExpandAliasFlags(appendedRaw);
 
         // Tokenize variantRaw according to current flag format
-        var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var tokens = new HashSet<string>(StringComparer.Ordinal);
         if (!string.IsNullOrEmpty(expandedVariant))
         {
             if (_flagFormat == FlagFormat.Long)
