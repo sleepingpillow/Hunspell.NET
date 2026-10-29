@@ -152,17 +152,12 @@ internal sealed class AffixManager : IDisposable
         bool hasBegin = VariantHasFlag(variant, _compoundBegin);
         bool hasMiddle = VariantHasFlag(variant, _compoundMiddle);
         bool hasEnd = VariantHasFlag(variant, _compoundEnd);
-        bool hasOnlyInCompound = VariantHasFlag(variant, _onlyInCompound);
-
-        bool hasExplicitPosition = hasCompound || hasBegin || hasMiddle || hasEnd;
-        bool onlyAsFallback = hasOnlyInCompound && !hasExplicitPosition;
-
         return position switch
         {
-            CompoundPosition.Begin => hasBegin || hasCompound || onlyAsFallback,
-            CompoundPosition.Middle => hasMiddle || hasCompound || onlyAsFallback,
-            CompoundPosition.End => hasEnd || hasCompound || onlyAsFallback,
-            _ => hasCompound || onlyAsFallback
+            CompoundPosition.Begin => hasBegin || hasCompound,
+            CompoundPosition.Middle => hasMiddle || hasCompound,
+            CompoundPosition.End => hasEnd || hasCompound,
+            _ => hasCompound
         };
     }
 
@@ -1762,22 +1757,28 @@ internal sealed class AffixManager : IDisposable
             }
         }
 
-        // If COMPOUNDRULE is defined, use it for compound checking
+        // Try COMPOUNDRULE first. Hunspell then retries compounds rejected by
+        // the rule with positional compound flags when those directives exist.
         if (_compoundRules.Count > 0)
         {
             bool isValid = CheckCompoundWithRules(word);
-            if (isValid && _checkCompoundRep)
+            if (isValid)
             {
-                // Check if this compound matches a dictionary word via REP replacements
-                if (CheckCompoundRep(word))
+                if (_checkCompoundRep)
                 {
-                    return false; // Forbid compound if it matches via REP
+                    // Check if this compound matches a dictionary word via REP replacements.
+                    if (CheckCompoundRep(word))
+                    {
+                        return false;
+                    }
                 }
+
+                return true;
             }
-            return isValid;
         }
 
-        // Otherwise, use flag-based compound checking
+        // If the COMPOUNDRULE path did not match, use flag-based compound
+        // checking as Hunspell does on its retry.
         // If no compound flags are defined, no compounds are allowed
         if (_compoundFlag is null && _compoundBegin is null)
         {
@@ -3317,6 +3318,15 @@ internal sealed class AffixManager : IDisposable
 
         if (derived)
         {
+            if (matchKind == AffixMatchKind.SuffixOnly &&
+                affixBase is not null &&
+                !surfacePart.EndsWith(affixBase, StringComparison.OrdinalIgnoreCase) &&
+                endPos == fullWord.Length && !string.IsNullOrEmpty(_onlyInCompound) &&
+                _hashManager.VariantContainsFlagAfterAppend(string.Empty, appendedFlag, _onlyInCompound))
+            {
+                return false;
+            }
+
             // If the affix rules that produced this derived piece appended a
             // COMPOUNDPERMITFLAG then allow positional exceptions. Otherwise
             // enforce the default: suffix-derived pieces may not appear in
@@ -3325,7 +3335,7 @@ internal sealed class AffixManager : IDisposable
             var permittedByAffix = false;
             if (!string.IsNullOrEmpty(appendedFlag) && !string.IsNullOrEmpty(_compoundPermitFlag))
             {
-                permittedByAffix = appendedFlag.IndexOf(_compoundPermitFlag!, StringComparison.OrdinalIgnoreCase) >= 0;
+                permittedByAffix = _hashManager.VariantContainsFlagAfterAppend(string.Empty, appendedFlag, _compoundPermitFlag);
             }
 
             if (endPos < fullWord.Length && hasSuffix && !permittedByAffix)
@@ -3567,14 +3577,14 @@ internal sealed class AffixManager : IDisposable
                         {
                             if (!endCandidates.Any(e => e.Part == tail)) endCandidates.Add((tail, null, false));
                     }
-                        else if (TryFindAffixBase(tail, true, out var tailBase, out _, out var tailApp, out _, out _))
+                        if (TryFindAffixBase(tail, true, out var tailBase, out _, out var tailApp, out _, out _))
                     {
                         if (tailBase is not null && tailBase.Length >= _compoundMin)
                         {
                                 if (!endCandidates.Any(e => e.Part == tailBase && e.Appended == tailApp)) endCandidates.Add((tailBase, tailApp, true));
                         }
 
-                            if (!endCandidates.Any(e => e.Part == tail && e.Appended == tailApp)) endCandidates.Add((tail, tailApp, false));
+                            if (!endCandidates.Any(e => e.Part == tail && e.Appended == tailApp && !e.Reconstructed)) endCandidates.Add((tail, tailApp, false));
                     }
                 }
 
@@ -3645,14 +3655,14 @@ internal sealed class AffixManager : IDisposable
                     {
                         if (!beginCandidates.Any(e => e.Part == head)) beginCandidates.Add((head, null, false));
                     }
-                    else if (TryFindAffixBase(head, true, out var headBase, out _, out var headApp, out _, out _))
+                    if (TryFindAffixBase(head, true, out var headBase, out _, out var headApp, out _, out _))
                     {
                         if (headBase is not null && headBase.Length >= _compoundMin)
                         {
                             if (!beginCandidates.Any(e => e.Part == headBase && e.Appended == headApp)) beginCandidates.Add((headBase, headApp, true));
                         }
 
-                        if (!beginCandidates.Any(e => e.Part == head && e.Appended == headApp)) beginCandidates.Add((head, headApp, false));
+                        if (!beginCandidates.Any(e => e.Part == head && e.Appended == headApp && !e.Reconstructed)) beginCandidates.Add((head, headApp, false));
                     }
                 }
 
@@ -3899,7 +3909,8 @@ internal sealed class AffixManager : IDisposable
         // hide repeated characters and lead to incorrect matches.
         var variants = _hashManager.GetWordFlagVariants(word).ToList();
         if (variants.Count == 0) return false;
-        return variants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound));
+        return variants.All(v => !string.IsNullOrEmpty(v) &&
+                                 _hashManager.VariantContainsFlagAfterAppend(v, null, _onlyInCompound));
     }
 
     /// <summary>
@@ -4006,7 +4017,19 @@ internal sealed class AffixManager : IDisposable
 
         // Use the helper that returns the base root candidate when a derivation
         // is found; this centralizes the logic for nested affix combinations.
-        return TryFindAffixBase(word, allowBaseOnlyInCompound, out _, out _, out _, out _, out _);
+        if (!TryFindAffixBase(word, allowBaseOnlyInCompound, out var baseCandidate, out _, out var appendedFlag, out _, out _))
+        {
+            return false;
+        }
+
+        if (allowBaseOnlyInCompound || baseCandidate is null ||
+            _hashManager.GetWordFlagVariants(baseCandidate).Any())
+        {
+            return true;
+        }
+
+        return string.IsNullOrEmpty(_onlyInCompound) ||
+               !_hashManager.VariantContainsFlagAfterAppend(string.Empty, appendedFlag, _onlyInCompound);
     }
 
     /// <summary>
@@ -4378,11 +4401,13 @@ internal sealed class AffixManager : IDisposable
             if (DictionaryContains(reconstructedBase))
             {
                 var baseVariants = _hashManager.GetWordFlagVariants(reconstructedBase).ToList();
-                if (!VariantsContainFlag(baseVariants, sfx.Flag))
+                var matchingVariants = baseVariants.Where(v => VariantHasFlag(v, sfx.Flag)).ToList();
+                if (matchingVariants.Count == 0)
                 {
                     continue;
                 }
-                if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
+                if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) &&
+                    matchingVariants.All(v => _hashManager.VariantContainsFlagAfterAppend(v, sfx.AppendedFlag, _onlyInCompound)))
                 {
                     // base only allowed in compounds and caller disallows it
                     // try other possibilities
@@ -4628,7 +4653,7 @@ internal sealed class AffixManager : IDisposable
                 if (DictionaryContains(nestedCandidate))
                 {
                     var baseVariants = _hashManager.GetWordFlagVariants(nestedCandidate).ToList();
-                    if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
+                    if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && _hashManager.VariantContainsFlagAfterAppend(v, null, _onlyInCompound)))
                     {
                         // not allowed by caller
                     }
@@ -4728,11 +4753,13 @@ internal sealed class AffixManager : IDisposable
             if (DictionaryContains(baseCandidateFromPrefix))
             {
                 var baseVariants = _hashManager.GetWordFlagVariants(baseCandidateFromPrefix).ToList();
-                if (!VariantsContainFlag(baseVariants, pfx.Flag))
+                var matchingVariants = baseVariants.Where(v => VariantHasFlag(v, pfx.Flag)).ToList();
+                if (matchingVariants.Count == 0)
                 {
                     continue;
                 }
-                if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
+                if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) &&
+                    matchingVariants.All(v => _hashManager.VariantContainsFlagAfterAppend(v, pfx.AppendedFlag, _onlyInCompound)))
                 {
                     // not allowed by caller, continue
                 }
@@ -4808,7 +4835,7 @@ internal sealed class AffixManager : IDisposable
                         {
                             continue;
                         }
-                        if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && innerVariants.Count > 0 && innerVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
+                        if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && innerVariants.Count > 0 && innerVariants.All(v => !string.IsNullOrEmpty(v) && _hashManager.VariantContainsFlagAfterAppend(v, null, _onlyInCompound)))
                         {
                             // inner base not allowed in isolation, try other prefixes
                         }
@@ -4873,7 +4900,7 @@ internal sealed class AffixManager : IDisposable
                 if (DictionaryContains(baseCandidate2))
                 {
                     var baseVariants = _hashManager.GetWordFlagVariants(baseCandidate2).ToList();
-                    if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && v.Contains(_onlyInCompound)))
+                    if (!allowBaseOnlyInCompound && !string.IsNullOrEmpty(_onlyInCompound) && baseVariants.Count > 0 && baseVariants.All(v => !string.IsNullOrEmpty(v) && _hashManager.VariantContainsFlagAfterAppend(v, null, _onlyInCompound)))
                     {
                         // not allowed
                     }

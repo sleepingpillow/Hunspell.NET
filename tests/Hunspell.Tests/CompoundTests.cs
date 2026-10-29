@@ -163,15 +163,15 @@ public class CompoundTests
     }
 
     [Fact]
-    public void OnlyInCompound_InCompound_ShouldBeValid()
+    public void OnlyInCompound_AloneDoesNotPermitCompounding()
     {
         // Arrange
         using var spellChecker = new HunspellSpellChecker(
             "../../../dictionaries/compound/onlyincompound.aff",
             "../../../dictionaries/compound/onlyincompound.dic");
 
-        // Act & Assert - ONLYINCOMPOUND words valid inside compounds
-        Assert.True(spellChecker.Spell("foofugebar"));
+        // ONLYINCOMPOUND restricts standalone use but does not permit a compound position.
+        Assert.False(spellChecker.Spell("foofugebar"));
     }
 
     [Fact]
