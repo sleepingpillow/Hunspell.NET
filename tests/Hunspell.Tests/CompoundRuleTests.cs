@@ -3,6 +3,17 @@ namespace Hunspell.Tests;
 public class CompoundRuleTests
 {
     [Fact]
+    public void CompoundRuleMismatchRetriesPositionFlags()
+    {
+        var fixtureDirectory = Path.Combine(AppContext.BaseDirectory, "dictionaries", "2999225");
+        using var spellChecker = new HunspellSpellChecker(
+            Path.Combine(fixtureDirectory, "2999225.aff"),
+            Path.Combine(fixtureDirectory, "2999225.dic"));
+
+        Assert.True(spellChecker.Spell("foobaz"));
+    }
+
+    [Fact]
     public void CompoundRule_BasicPattern_ABC()
     {
         // Arrange - Pattern ABC means: flag A, then flag B, then flag C
