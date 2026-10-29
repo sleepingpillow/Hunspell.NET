@@ -3312,7 +3312,10 @@ internal sealed class AffixManager : IDisposable
 
         if (derived)
         {
-            if (endPos == fullWord.Length && !string.IsNullOrEmpty(_onlyInCompound) &&
+            if (matchKind == AffixMatchKind.SuffixOnly &&
+                affixBase is not null &&
+                !surfacePart.EndsWith(affixBase, StringComparison.OrdinalIgnoreCase) &&
+                endPos == fullWord.Length && !string.IsNullOrEmpty(_onlyInCompound) &&
                 _hashManager.VariantContainsFlagAfterAppend(string.Empty, appendedFlag, _onlyInCompound))
             {
                 return false;
@@ -4008,13 +4011,19 @@ internal sealed class AffixManager : IDisposable
 
         // Use the helper that returns the base root candidate when a derivation
         // is found; this centralizes the logic for nested affix combinations.
-        if (!TryFindAffixBase(word, allowBaseOnlyInCompound, out var baseCandidate, out _, out _, out _, out _))
+        if (!TryFindAffixBase(word, allowBaseOnlyInCompound, out var baseCandidate, out _, out var appendedFlag, out _, out _))
         {
             return false;
         }
 
-        return allowBaseOnlyInCompound ||
-               (baseCandidate is not null && _hashManager.GetWordFlagVariants(baseCandidate).Any());
+        if (allowBaseOnlyInCompound || baseCandidate is null ||
+            _hashManager.GetWordFlagVariants(baseCandidate).Any())
+        {
+            return true;
+        }
+
+        return string.IsNullOrEmpty(_onlyInCompound) ||
+               !_hashManager.VariantContainsFlagAfterAppend(string.Empty, appendedFlag, _onlyInCompound);
     }
 
     /// <summary>
