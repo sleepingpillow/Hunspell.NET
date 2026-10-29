@@ -1757,22 +1757,28 @@ internal sealed class AffixManager : IDisposable
             }
         }
 
-        // If COMPOUNDRULE is defined, use it for compound checking
+        // Try COMPOUNDRULE first. Hunspell then retries compounds rejected by
+        // the rule with positional compound flags when those directives exist.
         if (_compoundRules.Count > 0)
         {
             bool isValid = CheckCompoundWithRules(word);
-            if (isValid && _checkCompoundRep)
+            if (isValid)
             {
-                // Check if this compound matches a dictionary word via REP replacements
-                if (CheckCompoundRep(word))
+                if (_checkCompoundRep)
                 {
-                    return false; // Forbid compound if it matches via REP
+                    // Check if this compound matches a dictionary word via REP replacements.
+                    if (CheckCompoundRep(word))
+                    {
+                        return false;
+                    }
                 }
+
+                return true;
             }
-            return isValid;
         }
 
-        // Otherwise, use flag-based compound checking
+        // If the COMPOUNDRULE path did not match, use flag-based compound
+        // checking as Hunspell does on its retry.
         // If no compound flags are defined, no compounds are allowed
         if (_compoundFlag is null && _compoundBegin is null)
         {
