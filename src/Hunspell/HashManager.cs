@@ -256,6 +256,17 @@ internal sealed class HashManager : IDisposable
         }
     }
 
+    internal IEnumerable<string> GetCaseVariants(string word)
+    {
+        if (!_words.TryGetValue(word, out var entries)) yield break;
+
+        foreach (var entry in entries)
+        {
+            if (!string.Equals(entry.Word, word, StringComparison.Ordinal))
+                yield return entry.Word;
+        }
+    }
+
     public bool Lookup(string word) => LookupWithCaseRules(word, null);
 
     internal bool LookupWithCaseRules(string word, string? keepCaseFlag)

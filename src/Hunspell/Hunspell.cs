@@ -159,6 +159,8 @@ public sealed class HunspellSpellChecker : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(word);
 
         var suggestions = new List<string>();
+        string prepared = PrepareInput(word).TrimEnd('.');
+        if (prepared.Length == 0) return suggestions;
 
         // If the word is correctly spelled, no suggestions needed. For very large
         // dictionaries, avoid expensive compound/affix recursion in Spell by
@@ -168,7 +170,7 @@ public sealed class HunspellSpellChecker : IDisposable
         bool isCorrect;
         if (_hashManager is not null && _hashManager.WordCount > 100_000)
         {
-            isCorrect = _hashManager.Lookup(word);
+            isCorrect = _hashManager.LookupWithCaseRules(prepared, _affixManager?.KeepCaseFlag);
         }
         else
         {
@@ -180,8 +182,12 @@ public sealed class HunspellSpellChecker : IDisposable
             return suggestions;
         }
 
-        // Generate suggestions using the suggestion manager
-        _affixManager?.GenerateSuggestions(word, suggestions);
+        if (_affixManager is null) return suggestions;
+
+        _affixManager.GenerateSuggestions(prepared, suggestions);
+        for (int i = 0; i < suggestions.Count; i++)
+            suggestions[i] = _affixManager.ConvertOutput(suggestions[i]);
+        suggestions.RemoveAll(suggestion => string.Equals(suggestion, word, StringComparison.Ordinal));
 
         return suggestions;
     }

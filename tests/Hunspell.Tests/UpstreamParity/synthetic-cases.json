@@ -158,5 +158,43 @@
     "Operation": "spell",
     "Input": "foo-bar",
     "Expected": false
+  },
+  {
+    "Id": "synthetic/exact-word-split",
+    "Affix": "SET UTF-8\nTRY o\n",
+    "Dictionary": "2\nfoo\nbar\n",
+    "Operation": "suggest",
+    "Input": "foobar",
+    "Expected": [
+      "foo bar"
+    ]
+  },
+  {
+    "Id": "synthetic/listed-pair-with-nosplitsugs",
+    "Affix": "SET UTF-8\nTRY o\nNOSPLITSUGS\n",
+    "Dictionary": "1\nfoo bar\n",
+    "Operation": "suggest",
+    "Input": "foobar",
+    "Expected": [
+      "foo bar"
+    ]
+  },
+  {
+    "Id": "synthetic/nosuggest-on-affixed-replacement",
+    "Affix": "SET UTF-8\nTRY o\nNOSUGGEST N\nREP 1\nREP a o\nSFX S Y 1\nSFX S 0 s .\n",
+    "Dictionary": "1\nwork/SN\n",
+    "Operation": "suggest",
+    "Input": "warks",
+    "Expected": []
+  },
+  {
+    "Id": "synthetic/oconv-does-not-reprocess-output",
+    "Affix": "SET UTF-8\nTRY o\nOCONV 2\nOCONV o 0\nOCONV 0 x\n",
+    "Dictionary": "1\nwork\n",
+    "Operation": "suggest",
+    "Input": "wark",
+    "Expected": [
+      "w0rk"
+    ]
   }
 ]

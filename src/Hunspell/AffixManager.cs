@@ -78,6 +78,8 @@ internal sealed class AffixManager : IDisposable
     internal string TryCharacters => _options.TryGetValue("TRY", out var chars) ? chars : DefaultTryCharacters;
     internal List<(string from, string to)> RepTable => _repTable;
     internal bool NoSplitSuggestions => _noSplitSuggestions;
+    internal bool SuggestHyphenatedSplits =>
+        _options.TryGetValue("TRY", out var chars) && chars.AsSpan().IndexOfAny('-', 'a') >= 0;
     internal bool FullStrip => _fullStrip;
     internal bool OnlyMaxDiff => _onlyMaxDiff;
     internal int MaxDiff => _maxDiff;
@@ -871,7 +873,7 @@ internal sealed class AffixManager : IDisposable
                         // This is a replacement pattern: REP from to
                         // Normalize REP tokens to NFC to match dictionary normalization
                         var fromToken = parts[1]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
-                        var toToken = parts[2]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
+                        var toToken = parts[2].Replace('_', ' ').Normalize();
                         _repTable.Add((fromToken, toToken));
                     }
                 }
@@ -1068,6 +1070,32 @@ internal sealed class AffixManager : IDisposable
     }
 
     internal string ConvertInput(string word) => _iconvTable.Apply(word);
+
+    internal string ConvertOutput(string word) => _oconvTable.Apply(word);
+
+    internal bool CanSuggestWord(string word, bool allowAffixes = false)
+    {
+        if (word.Length == 0) return false;
+
+        if (_hashManager.LookupWithCaseRules(word, KeepCaseFlag))
+        {
+            return _hashManager.GetWordFlagVariants(word).Any(flags =>
+                !VariantHasFlag(flags, _noSuggestFlag) &&
+                !VariantHasFlag(flags, _forbiddenWordFlag) &&
+                !VariantHasFlag(flags, _onlyInCompound) &&
+                !VariantHasFlag(flags, _needAffixFlag));
+        }
+
+        if (!allowAffixes ||
+            !TryFindAffixBase(word, allowBaseOnlyInCompound: false, out var root, out _, out var appended, out _, out _) ||
+            root is null ||
+            IsAffixDerivedFormForbiddenByCompound(word) || IsAffixDerivedOnlyInCompound(word) || IsForbiddenWord(word))
+            return false;
+
+        if (VariantHasFlag(appended, _noSuggestFlag)) return false;
+        return _noSuggestFlag is null ||
+            _hashManager.GetWordFlagVariants(root).Any(flags => !VariantHasFlag(flags, _noSuggestFlag));
+    }
 
     // Generate candidates that are two edits away (perform another single-edit
     // pass on single-edit candidates). This helps find suggestions that require
