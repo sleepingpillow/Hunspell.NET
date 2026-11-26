@@ -24,7 +24,7 @@ internal sealed class HashManager : IDisposable
     // - ph:from->to -> mapping from -> to
     // - ph:pattern* -> mapping pattern_minus_lastchar -> surface_minus_lastchar
     private readonly List<(string from, string to)> _phReplacementRules = new();
-    private readonly HashSet<string> _runtimeWords = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _removedWords = new(StringComparer.Ordinal);
     private bool _disposed;
     // Flag representation format for dictionary entries. Default is single-character flags.
     private enum FlagFormat { Single, Long, Num, Utf8 }
@@ -256,9 +256,43 @@ internal sealed class HashManager : IDisposable
         }
     }
 
+    private bool TryGetActiveEntries(string word, out IReadOnlyList<WordEntry> entries)
+    {
+        if (!_words.TryGetValue(word, out var dictionaryEntries))
+        {
+            entries = [];
+            return false;
+        }
+
+        entries = _removedWords.Count > 0 && dictionaryEntries.Any(entry => _removedWords.Contains(entry.Word))
+            ? dictionaryEntries.Where(entry => !_removedWords.Contains(entry.Word)).ToList()
+            : dictionaryEntries;
+        return entries.Count > 0;
+    }
+
+    internal bool IsRuntimeRemoved(string word)
+    {
+        if (_removedWords.Count == 0) return false;
+        if (_removedWords.Contains(word)) return true;
+        string lower = word.ToLowerInvariant();
+        if (string.Equals(lower, word, StringComparison.Ordinal)) return false;
+
+        // Hunspell checks title case before lowercase for all-uppercase input.
+        // A removed fallback form blocks that lookup just like a forbidden entry.
+        string title = char.ToUpperInvariant(lower[0]) + lower[1..];
+        bool lowerRemoved = _removedWords.Contains(lower);
+        if (string.Equals(word, title, StringComparison.Ordinal))
+            return lowerRemoved && !HasExactCaseEntry(word);
+
+        bool titleRemoved = _removedWords.Contains(title);
+        return (titleRemoved || lowerRemoved) &&
+            string.Equals(word, word.ToUpperInvariant(), StringComparison.Ordinal) &&
+            !HasExactCaseEntry(word) && (titleRemoved || !HasExactCaseEntry(title));
+    }
+
     internal IEnumerable<string> GetCaseVariants(string word)
     {
-        if (!_words.TryGetValue(word, out var entries)) yield break;
+        if (!TryGetActiveEntries(word, out var entries)) yield break;
 
         foreach (var entry in entries)
         {
@@ -272,13 +306,12 @@ internal sealed class HashManager : IDisposable
     internal bool LookupWithCaseRules(string word, string? keepCaseFlag)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        // Runtime words are stored case-insensitively and should match directly
-        if (_runtimeWords.Contains(word)) return true;
+        if (IsRuntimeRemoved(word)) return false;
 
         // _words uses a case-insensitive key comparison. Use TryGetValue to
         // retrieve all variants for the surface form and then decide whether
         // a match should be allowed based on exact-case or permissive rules.
-        if (_words.TryGetValue(word, out var entries))
+        if (TryGetActiveEntries(word, out var entries))
         {
             // If an exact-case variant exists, accept it immediately
             if (entries.Any(e => string.Equals(e.Word, word, StringComparison.Ordinal)))
@@ -297,7 +330,7 @@ internal sealed class HashManager : IDisposable
             {
                 bool isInitialCap = word.Length > 0 && char.IsUpper(word[0]) &&
                     word[1..] == word[1..].ToLowerInvariant();
-                caseVariants = entries.Where(entry =>
+                caseVariants = caseVariants.Where(entry =>
                     !VariantContainsFlagAfterAppend(entry.Flags, null, keepCaseFlag) ||
                     (_checkSharps && isInitialCap && entry.Word.Contains('ß')));
             }
@@ -347,7 +380,7 @@ internal sealed class HashManager : IDisposable
             {
                 if (candidate == word) continue;
 
-                if (_words.TryGetValue(candidate, out var sharpEntries))
+                if (TryGetActiveEntries(candidate, out var sharpEntries))
                 {
                     // If the original word is AllUpper (e.g. MÜSSIG) and we found a valid entry
                     // via ß-substitution, accept it.
@@ -405,15 +438,8 @@ internal sealed class HashManager : IDisposable
     public bool HasExactCaseEntry(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_words.TryGetValue(word, out var entries))
-        {
-            if (entries.Any(e => string.Equals(e.Word, word, StringComparison.Ordinal)))
-            {
-                return true;
-            }
-        }
-
-        return _runtimeWords.Contains(word);
+        return !_removedWords.Contains(word) && _words.TryGetValue(word, out var entries) &&
+            entries.Any(entry => string.Equals(entry.Word, word, StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -425,7 +451,7 @@ internal sealed class HashManager : IDisposable
     public bool IsUppercaseOnlyEntry(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (!_words.TryGetValue(word, out var entries))
+        if (!TryGetActiveEntries(word, out var entries))
         {
             return false;
         }
@@ -478,7 +504,7 @@ internal sealed class HashManager : IDisposable
     public bool IsInitCapOnlyEntry(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        if (!_words.TryGetValue(word, out var entries))
+        if (!TryGetActiveEntries(word, out var entries))
         {
             return false;
         }
@@ -593,16 +619,60 @@ internal sealed class HashManager : IDisposable
         return false;
     }
 
-    public bool Add(string word)
+    public bool Add(string word, string? forbiddenFlag)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return _runtimeWords.Add(word);
+        bool changed = _removedWords.Remove(word);
+        if (!_words.TryGetValue(word, out var entries))
+        {
+            _words[word] = [new WordEntry(word, string.Empty)];
+            return true;
+        }
+
+        bool hasExactEntry = false;
+        for (int i = 0; i < entries.Count; i++)
+        {
+            var entry = entries[i];
+            if (!string.Equals(entry.Word, word, StringComparison.Ordinal)) continue;
+
+            hasExactEntry = true;
+            if (forbiddenFlag is not null && VariantContainsFlagAfterAppend(entry.Flags, null, forbiddenFlag))
+            {
+                entries[i] = entry with { Flags = RemoveFlag(entry.Flags, forbiddenFlag) };
+                changed = true;
+            }
+        }
+
+        if (hasExactEntry) return changed;
+
+        entries.Add(new WordEntry(word, string.Empty));
+        return true;
+    }
+
+    private string RemoveFlag(string flags, string flag)
+    {
+        flags = ExpandAliasFlags(flags);
+        if (_flagFormat == FlagFormat.Num)
+            return string.Join(',', flags.Split(',').Where(token => token.Trim() != flag));
+
+        if (_flagFormat == FlagFormat.Long)
+        {
+            var remaining = new StringBuilder(flags.Length);
+            for (int i = 0; i < flags.Length; i += 2)
+            {
+                var token = flags.AsSpan(i, Math.Min(2, flags.Length - i));
+                if (!token.SequenceEqual(flag)) remaining.Append(token);
+            }
+            return remaining.ToString();
+        }
+
+        return flags.Replace(flag, string.Empty, StringComparison.Ordinal);
     }
 
     public bool Remove(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return _runtimeWords.Remove(word);
+        return _removedWords.Add(word);
     }
 
     public int WordCount
@@ -610,14 +680,18 @@ internal sealed class HashManager : IDisposable
         get
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            return _words.Count + _runtimeWords.Count;
+            return _words.Count;
         }
     }
 
     public IEnumerable<string> GetAllWords()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return _words.Keys.Concat(_runtimeWords);
+        if (_removedWords.Count == 0) return _words.Keys;
+
+        return _words.Values
+            .Select(entries => entries.FirstOrDefault(entry => !_removedWords.Contains(entry.Word))?.Word)
+            .OfType<string>();
     }
 
     /// <summary>
@@ -628,7 +702,8 @@ internal sealed class HashManager : IDisposable
     public bool HasPhTarget(string key)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        return _phIndex.ContainsKey(key);
+        return _phIndex.TryGetValue(key, out var surfaces) &&
+            (_removedWords.Count == 0 || surfaces.Any(surface => !_removedWords.Contains(surface)));
     }
 
     /// <summary>
@@ -646,7 +721,7 @@ internal sealed class HashManager : IDisposable
             if (string.IsNullOrEmpty(key)) continue;
             // ignore special pattern keys for this check
             if (key.Contains('*') || key.Contains("->")) continue;
-            if (word.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            if (word.Contains(key, StringComparison.OrdinalIgnoreCase) && HasPhTarget(key)) return true;
         }
         return false;
     }
@@ -685,8 +760,9 @@ internal sealed class HashManager : IDisposable
     public string? GetWordFlags(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (IsRuntimeRemoved(word)) return null;
 
-        if (_words.TryGetValue(word, out var entries))
+        if (TryGetActiveEntries(word, out var entries))
         {
             // Return the union of all flags across homonym entries. This keeps
             // the existing callers working (they typically call .Contains on
@@ -740,8 +816,7 @@ internal sealed class HashManager : IDisposable
             return string.Concat(tokens);
         }
 
-        // Runtime words have no flags
-        return _runtimeWords.Contains(word) ? string.Empty : null;
+        return null;
     }
 
     /// <summary>
@@ -752,8 +827,9 @@ internal sealed class HashManager : IDisposable
     public IEnumerable<string> GetWordFlagVariants(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (IsRuntimeRemoved(word)) yield break;
 
-        if (_words.TryGetValue(word, out var entries))
+        if (TryGetActiveEntries(word, out var entries))
         {
             // If an exact-case variant exists (e.g. 'Kg') prefer those entries
             // so per-case flags (like 'Kg/X') are respected. Otherwise fall back
@@ -764,11 +840,7 @@ internal sealed class HashManager : IDisposable
             {
                 yield return ExpandAliasFlags(e.Flags);
             }
-            yield break;
         }
-
-        // runtime words have zero flags
-        if (_runtimeWords.Contains(word)) yield return string.Empty;
     }
 
     /// <summary>
@@ -811,9 +883,9 @@ internal sealed class HashManager : IDisposable
     /// </summary>
     public IEnumerable<string> GetMorphologicalData(string word)
     {
-        if (string.IsNullOrEmpty(word)) yield break;
-        
-        if (_words.TryGetValue(word, out var entries))
+        if (string.IsNullOrEmpty(word) || IsRuntimeRemoved(word)) yield break;
+
+        if (TryGetActiveEntries(word, out var entries))
         {
             foreach (var entry in entries)
             {
@@ -830,7 +902,7 @@ internal sealed class HashManager : IDisposable
         if (!_disposed)
         {
             _words.Clear();
-            _runtimeWords.Clear();
+            _removedWords.Clear();
             _disposed = true;
         }
     }

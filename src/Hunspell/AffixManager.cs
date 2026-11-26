@@ -1071,11 +1071,20 @@ internal sealed class AffixManager : IDisposable
 
     internal string ConvertInput(string word) => _iconvTable.Apply(word);
 
+    internal string? ForbiddenWordFlag => _forbiddenWordFlag;
+
+    internal void InvalidateDictionaryCaches()
+    {
+        _affixBaseCache.Clear();
+        _compoundTokenMatchCache.Clear();
+        _twoWordSimpleCache.Clear();
+    }
+
     internal string ConvertOutput(string word) => _oconvTable.Apply(word);
 
     internal bool CanSuggestWord(string word, bool allowAffixes = false)
     {
-        if (word.Length == 0) return false;
+        if (word.Length == 0 || _hashManager.IsRuntimeRemoved(word)) return false;
 
         if (_hashManager.LookupWithCaseRules(word, KeepCaseFlag))
         {
@@ -1723,6 +1732,7 @@ internal sealed class AffixManager : IDisposable
     public bool CheckCompound(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_hashManager.IsRuntimeRemoved(word)) return false;
         // If the dictionary contains a 'ph:' field mapping that names this
         // compound form (e.g., "forbiddenroot"), upstream Hunspell treats
         // that collapsed form as a misspelling for the multi-word entry and
@@ -3942,6 +3952,7 @@ internal sealed class AffixManager : IDisposable
     public bool IsForbiddenWord(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_hashManager.IsRuntimeRemoved(word)) return true;
 
         if (_forbiddenWordFlag is null) return false;
 
@@ -4138,6 +4149,12 @@ internal sealed class AffixManager : IDisposable
 
     private bool TryFindAffixBase(string word, bool allowBaseOnlyInCompound, out string? baseCandidate, out AffixMatchKind kind, out string? appendedFlag, out int affixCount, out int cleanAffixCount, IReadOnlyList<string>? requiredCompoundFlags = null, int depth = 0, bool skipPartialCircumfix = false)
     {
+        if (_hashManager.IsRuntimeRemoved(word))
+        {
+            (baseCandidate, kind, appendedFlag, affixCount, cleanAffixCount) = (null, default, null, 0, 0);
+            return false;
+        }
+
         var requiredFlagsKey = requiredCompoundFlags is null ? "<none>" : string.Join('|', requiredCompoundFlags);
         var cacheKey = new AffixBaseCacheKey(word, allowBaseOnlyInCompound, requiredFlagsKey, depth, skipPartialCircumfix);
 

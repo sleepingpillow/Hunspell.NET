@@ -196,5 +196,211 @@
     "Expected": [
       "w0rk"
     ]
+  },
+  {
+    "Id": "synthetic/remove-restore-affix-and-compound",
+    "Affix": "SET UTF-8\nCOMPOUNDFLAG C\nCOMPOUNDMIN 2\nSFX S Y 1\nSFX S 0 s .\n",
+    "Dictionary": "2\nword/SC\nbar/C\n",
+    "Operation": "runtime",
+    "Input": "word",
+    "Steps": [
+      {
+        "Operation": "spell",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "words"
+      },
+      {
+        "Operation": "spell",
+        "Word": "wordbar"
+      },
+      {
+        "Operation": "remove",
+        "Word": "word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "words"
+      },
+      {
+        "Operation": "spell",
+        "Word": "wordbar"
+      },
+      {
+        "Operation": "add",
+        "Word": "word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "words"
+      },
+      {
+        "Operation": "spell",
+        "Word": "wordbar"
+      }
+    ],
+    "Expected": [
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "Id": "synthetic/remove-restore-affixed-surface",
+    "Affix": "SET UTF-8\nSFX S Y 1\nSFX S 0 s .\n",
+    "Dictionary": "1\nword/S\n",
+    "Operation": "runtime",
+    "Input": "words",
+    "Steps": [
+      {
+        "Operation": "spell",
+        "Word": "words"
+      },
+      {
+        "Operation": "remove",
+        "Word": "words"
+      },
+      {
+        "Operation": "spell",
+        "Word": "word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "words"
+      },
+      {
+        "Operation": "spell",
+        "Word": "Words"
+      },
+      {
+        "Operation": "add",
+        "Word": "words"
+      },
+      {
+        "Operation": "spell",
+        "Word": "words"
+      }
+    ],
+    "Expected": [
+      true,
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  {
+    "Id": "synthetic/add-removes-dictionary-forbidden-flag",
+    "Affix": "SET UTF-8\nFORBIDDENWORD F\nSFX S Y 1\nSFX S 0 s .\n",
+    "Dictionary": "1\nstop/FS\n",
+    "Operation": "runtime",
+    "Input": "stop",
+    "Steps": [
+      {
+        "Operation": "spell",
+        "Word": "stop"
+      },
+      {
+        "Operation": "add",
+        "Word": "stop"
+      },
+      {
+        "Operation": "spell",
+        "Word": "stop"
+      },
+      {
+        "Operation": "spell",
+        "Word": "stops"
+      }
+    ],
+    "Expected": [
+      false,
+      true,
+      true
+    ]
+  },
+  {
+    "Id": "synthetic/runtime-input-conversion",
+    "Affix": "SET UTF-8\nICONV 1\nICONV W w\n",
+    "Dictionary": "1\nword\n",
+    "Operation": "runtime",
+    "Input": "Word",
+    "Steps": [
+      {
+        "Operation": "remove",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "word"
+      },
+      {
+        "Operation": "add",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "word"
+      }
+    ],
+    "Expected": [
+      false,
+      true
+    ]
+  },
+  {
+    "Id": "synthetic/remove-title-case-fallback",
+    "Affix": "SET UTF-8\n",
+    "Dictionary": "1\nword\n",
+    "Operation": "runtime",
+    "Input": "Word",
+    "Steps": [
+      {
+        "Operation": "remove",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "WORD"
+      },
+      {
+        "Operation": "add",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "WORD"
+      }
+    ],
+    "Expected": [
+      true,
+      false,
+      false,
+      true
+    ]
   }
 ]

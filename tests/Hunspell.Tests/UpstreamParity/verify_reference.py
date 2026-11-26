@@ -30,6 +30,8 @@ class NativeHunspell:
         self.lib.Hunspell_get_dic_encoding.restype = ctypes.c_char_p
         self.lib.Hunspell_spell.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
         self.lib.Hunspell_spell.restype = ctypes.c_int
+        self.lib.Hunspell_add.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        self.lib.Hunspell_add.restype = ctypes.c_int
         self.lib.Hunspell_remove.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
         self.lib.Hunspell_remove.restype = ctypes.c_int
         self.lib.Hunspell_suggest.argtypes = [
@@ -67,6 +69,23 @@ class NativeHunspell:
             raise AssertionError(f"Removal precondition failed: {word!r}")
         self.lib.Hunspell_remove(handle, word.encode(self.encoding(handle)))
         return self.spell(handle, word)
+
+    def runtime(self, handle, steps):
+        results = []
+        for step in steps:
+            op, word = step["Operation"], step["Word"]
+            if op == "spell":
+                results.append(self.spell(handle, word))
+                continue
+            if op == "remove":
+                mutate = self.lib.Hunspell_remove
+            elif op == "add":
+                mutate = self.lib.Hunspell_add
+            else:
+                raise ValueError(f"Unknown runtime operation: {op}")
+            if mutate(handle, word.encode(self.encoding(handle))) != 0:
+                raise RuntimeError(f"Hunspell {op} failed: {word!r}")
+        return results
 
 
 def required_words(path):
@@ -118,6 +137,8 @@ def main():
                     actual = native.suggest(handle, case["Input"])
                 elif operation == "remove":
                     actual = native.remove(handle, case["Input"])
+                elif operation == "runtime":
+                    actual = native.runtime(handle, case["Steps"])
                 else:
                     raise ValueError(f"Unknown reference operation: {operation}")
                 compare(case["Id"], case["Expected"], actual)

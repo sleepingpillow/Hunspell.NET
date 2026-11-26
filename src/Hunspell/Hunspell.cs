@@ -64,7 +64,7 @@ public sealed class HunspellSpellChecker : IDisposable
         // Avoid a costly affix and compound search for an abbreviation explicitly
         // listed with its final dot in a large dictionary.
         if (prepared.Length != trimmed.Length && _hashManager is { WordCount: > 100_000 } &&
-            !_hashManager.Lookup(trimmed) && _hashManager.Lookup(trimmed + '.') &&
+            !_hashManager.IsRuntimeRemoved(trimmed) && !_hashManager.Lookup(trimmed) && _hashManager.Lookup(trimmed + '.') &&
             CheckWord(trimmed + '.') == WordMatch.Accepted)
             return true;
 
@@ -93,6 +93,7 @@ public sealed class HunspellSpellChecker : IDisposable
     private WordMatch CheckWord(string word)
     {
         if (_affixManager is null || _hashManager is null) return WordMatch.Unknown;
+        if (_hashManager.IsRuntimeRemoved(word)) return WordMatch.Forbidden;
 
         if (_hashManager.Lookup(word))
         {
@@ -120,7 +121,9 @@ public sealed class HunspellSpellChecker : IDisposable
 
     private enum WordMatch { Unknown, Accepted, Forbidden }
 
-    private string PrepareInput(string word)
+    private string PrepareInput(string word) => NormalizeInput(word).TrimStart(' ');
+
+    private string NormalizeInput(string word)
     {
         word = _affixManager?.ConvertInput(word) ?? word;
         if (_affixManager?.IgnoreChars is { Length: > 0 } ignored &&
@@ -129,7 +132,7 @@ public sealed class HunspellSpellChecker : IDisposable
             word = new string(word.Where(ch => !ignored.Contains(ch)).ToArray());
         }
 
-        return word.TrimStart(' ');
+        return word;
     }
 
     private static bool IsNumber(string word)
@@ -202,7 +205,12 @@ public sealed class HunspellSpellChecker : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentException.ThrowIfNullOrWhiteSpace(word);
 
-        return _hashManager?.Add(word) ?? false;
+        string normalized = NormalizeInput(word);
+        if (normalized.Length == 0 || _hashManager?.Add(normalized, _affixManager?.ForbiddenWordFlag) != true)
+            return false;
+
+        _affixManager?.InvalidateDictionaryCaches();
+        return true;
     }
 
     /// <summary>
@@ -215,7 +223,11 @@ public sealed class HunspellSpellChecker : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentException.ThrowIfNullOrWhiteSpace(word);
 
-        return _hashManager?.Remove(word) ?? false;
+        string normalized = NormalizeInput(word);
+        if (normalized.Length == 0 || _hashManager?.Remove(normalized) != true) return false;
+
+        _affixManager?.InvalidateDictionaryCaches();
+        return true;
     }
 
     /// <summary>
