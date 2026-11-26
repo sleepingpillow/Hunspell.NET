@@ -1,0 +1,66 @@
+[
+  {
+    "Id": "synthetic/wordchars",
+    "Affix": "SET UTF-8\nWORDCHARS xyz\n",
+    "Dictionary": "1\ngood\n",
+    "Operation": "spell",
+    "Input": "xyz",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/keepcase",
+    "Affix": "SET UTF-8\nKEEPCASE K\n",
+    "Dictionary": "1\nLondon/K\n",
+    "Operation": "spell",
+    "Input": "London",
+    "Expected": true
+  },
+  {
+    "Id": "synthetic/numeric-flag",
+    "Affix": "SET UTF-8\nFLAG num\nFORBIDDENWORD 1\n",
+    "Dictionary": "1\nword/10\n",
+    "Operation": "spell",
+    "Input": "word",
+    "Expected": true
+  },
+  {
+    "Id": "synthetic/iconv-order",
+    "Affix": "SET UTF-8\nICONV 1\nICONV x a\n",
+    "Dictionary": "1\nx\n",
+    "Operation": "spell",
+    "Input": "x",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/escaped-slash",
+    "Affix": "SET UTF-8\n",
+    "Dictionary": "1\nand\\/or\n",
+    "Operation": "spell",
+    "Input": "and/or",
+    "Expected": true
+  },
+  {
+    "Id": "synthetic/nosuggest",
+    "Affix": "SET UTF-8\nTRY o\nNOSUGGEST N\n",
+    "Dictionary": "1\nwork/N\n",
+    "Operation": "suggest",
+    "Input": "wark",
+    "Expected": []
+  },
+  {
+    "Id": "synthetic/oconv",
+    "Affix": "SET UTF-8\nTRY o\nOCONV 1\nOCONV o 0\n",
+    "Dictionary": "1\nwork\n",
+    "Operation": "suggest",
+    "Input": "wark",
+    "Expected": ["w0rk"]
+  },
+  {
+    "Id": "synthetic/remove-base-word",
+    "Affix": "SET UTF-8\n",
+    "Dictionary": "1\nword\n",
+    "Operation": "remove",
+    "Input": "word",
+    "Expected": false
+  }
+]

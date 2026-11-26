@@ -1,0 +1,18 @@
+{
+  "upstream/breakdefault/good/3": false,
+  "upstream/breakdefault/good/4": false,
+  "upstream/breakdefault/good/6": false,
+  "upstream/breakdefault/good/7": false,
+  "upstream/slash/good/1": false,
+  "upstream/slash/good/2": false,
+  "upstream/slash/good/3": false,
+  "upstream/slash/good/4": false,
+  "synthetic/wordchars": true,
+  "synthetic/keepcase": false,
+  "synthetic/numeric-flag": false,
+  "synthetic/iconv-order": true,
+  "synthetic/escaped-slash": false,
+  "synthetic/nosuggest": ["work", "work work"],
+  "synthetic/oconv": ["work", "work work"],
+  "synthetic/remove-base-word": true
+}

@@ -2,6 +2,14 @@
 
 This document tracks the status of Hunspell.NET's compatibility with the upstream Hunspell test suite.
 
+> **Historical notes below:** the category counts and feature claims on this
+> page predate the pinned parity baseline and must not be used as a current
+> compatibility percentage. In particular, the formerly listed nested
+> good/wrong tests had no corresponding word lists and performed no word
+> assertions. The pinned, hash-checked reference fixtures, exact known
+> differences, verification commands and CI integration are documented in
+> [the parity test README](../tests/Hunspell.Tests/UpstreamParity/README.md).
+
 ## Summary
 
 | Category | Active | Commented | Total | Pass Rate |

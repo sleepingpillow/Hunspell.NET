@@ -11,21 +11,9 @@ namespace Hunspell.Tests;
 /// Tests for upstream Hunspell test cases. These tests verify compatibility with
 /// the original Hunspell test suite.
 ///
-/// Test Status Summary (this file only):
-/// - GoodWords tests (Root Level): 75 active, 39 commented out
-/// - GoodWords tests (Nested): 20 active
-/// - WrongWords tests (Root Level): 76 active, 21 commented out
-/// - WrongWords tests (Nested): 20 active
-/// - Suggestions tests: 6 active
-/// - Nested specialty tests: 36 active (various compound/pattern tests)
-/// - Total active in this file: 233 tests (all passing)
-/// - The active upstream cases below are expected to pass; commented cases are
-///   retained only for unsupported or not-yet-verified behavior.
-///
-/// Note: The test project also includes 139 other tests in separate test files.
-///
-/// Commented out tests indicate features not yet fully implemented.
-/// See docs/upstream-test-status.md for detailed status.
+/// These historical local fixtures are not necessarily identical to current
+/// upstream files. The pinned upstream fixtures and their explicit differences
+/// are exercised separately by UpstreamParityTests.
 /// </summary>
 public class UpstreamAffixAndCompoundTests
 {
@@ -38,16 +26,14 @@ public class UpstreamAffixAndCompoundTests
         return Path.Combine("..", "..", "..", "dictionaries", baseName, fileName + ext);
     }
 
-    private static IEnumerable<string> ReadList(string path, Encoding? encoding = null)
+    private static IReadOnlyList<string> ReadList(string path, Encoding? encoding = null)
     {
-        if (!File.Exists(path)) yield break;
-        var enc = encoding ?? Encoding.UTF8;
-        foreach (var line in File.ReadAllLines(path, enc))
-        {
-            var t = line.Trim();
-            if (string.IsNullOrEmpty(t)) continue;
-            yield return t;
-        }
+        var entries = File.ReadAllLines(path, encoding ?? Encoding.UTF8)
+            .Select(line => line.Trim())
+            .Where(line => line.Length > 0)
+            .ToArray();
+        Assert.True(entries.Length > 0, $"No words in required fixture: {path}");
+        return entries;
     }
 
     #region GoodWords Tests - Root Level Test Cases
@@ -57,10 +43,6 @@ public class UpstreamAffixAndCompoundTests
     // Alphabetically sorted for easy maintenance
     //
     // PASSING TESTS:
-    [InlineData("1748408-1")]
-    [InlineData("1748408-2")]
-    [InlineData("1748408-3")]
-    [InlineData("1748408-4")]
     [InlineData("2970240")]
     [InlineData("2970242")]  // re-enable: investigate bug tracker case (wrong word accepted)
     [InlineData("IJ")]
@@ -210,9 +192,6 @@ public class UpstreamAffixAndCompoundTests
         var aff = D(baseName, ".aff");
         var dic = D(baseName, ".dic");
 
-        // if both aff and dic missing, skip
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
-
         Encoding encoding = Encoding.UTF8;
         try
         {
@@ -242,46 +221,7 @@ public class UpstreamAffixAndCompoundTests
 
     #endregion
 
-    #region GoodWords Tests - Nested Subdirectory Test Cases
-
-    [Theory]
-    // Nested test cases (subdirectories within test directories)
-    [InlineData("affixes/affixes")]
-    [InlineData("break/basic")]
-    [InlineData("checkcompoundpattern/basic")]
-    [InlineData("checkcompoundpattern/replacement")]
-    [InlineData("checkcompoundrep/basic")]
-    [InlineData("compoundmoresuffixes/basic")]
-    [InlineData("compoundrule/basic")]
-    [InlineData("compoundrule/compoundrule")]
-    [InlineData("compoundrule/compoundrule2")]
-    [InlineData("compoundrule/compoundrule3")]
-    [InlineData("compoundrule/compoundrule4")]
-    [InlineData("compoundrule/compoundrule5")]
-    [InlineData("compoundrule/compoundrule6")]
-    [InlineData("compoundrule/compoundrule7")]
-    [InlineData("compoundrule/star")]
-    [InlineData("compoundsyllable/syllable")]
-    [InlineData("condition/condition")]
-    [InlineData("swedish/directives")]
-    [InlineData("swedish/sv_FI")]
-    [InlineData("swedish/sv_SE")]
-    public void UpstreamGoodWords_Nested_ShouldPass(string baseName)
-    {
-        var aff = D(baseName, ".aff");
-        var dic = D(baseName, ".dic");
-
-        // if both aff and dic missing, skip
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
-
-        using var sp = new HunspellSpellChecker(aff, dic);
-
-        var good = D(baseName, ".good");
-        foreach (var w in ReadList(good))
-        {
-            Assert.True(sp.Spell(w), $"Expected '{w}' from {baseName}.good to be accepted");
-        }
-    }
+    #region Compound Diagnostics
 
     [Fact]
     public void Debug_CheckCompoundPattern_Inspect()
@@ -290,8 +230,6 @@ public class UpstreamAffixAndCompoundTests
         var baseName = "checkcompoundpattern";
         var aff = D(baseName, ".aff");
         var dic = D(baseName, ".dic");
-
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
 
         using var sp = new HunspellSpellChecker(aff, dic);
         var afField = typeof(HunspellSpellChecker).GetField("_affixManager", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -376,8 +314,6 @@ public class UpstreamAffixAndCompoundTests
         var baseName = "opentaal_cpdpat2";
         var aff = D(baseName, ".aff");
         var dic = D(baseName, ".dic");
-
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
 
         using var sp = new HunspellSpellChecker(aff, dic);
         var afField = typeof(HunspellSpellChecker).GetField("_affixManager", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -466,8 +402,6 @@ public class UpstreamAffixAndCompoundTests
         var aff = D(baseName, ".aff");
         var dic = D(baseName, ".dic");
 
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
-
         using var sp = new HunspellSpellChecker(aff, dic);
         var hmField = typeof(HunspellSpellChecker).GetField("_hashManager", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
         var hm = hmField?.GetValue(sp);
@@ -494,8 +428,6 @@ public class UpstreamAffixAndCompoundTests
         var baseName = "simplifiedtriple";
         var aff = D(baseName, ".aff");
         var dic = D(baseName, ".dic");
-
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
 
         using var sp = new HunspellSpellChecker(aff, dic);
         var afField = typeof(HunspellSpellChecker).GetField("_affixManager", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -539,7 +471,7 @@ public class UpstreamAffixAndCompoundTests
     #region WrongWords Tests - Root Level Test Cases
 
     [Theory]
-    // Root-level upstream test cases with .wrong files
+    // Root-level local test cases with .wrong files
     //
     // PASSING TESTS:
     [InlineData("1463589")]
@@ -572,7 +504,6 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("checksharps")]
     [InlineData("checksharpsutf")]
     [InlineData("compoundaffix")]
-    [InlineData("compoundaffix2")]
     [InlineData("compoundflag")]
     [InlineData("compoundforbid")]
     [InlineData("compoundrule")]
@@ -609,10 +540,6 @@ public class UpstreamAffixAndCompoundTests
     [InlineData("ph2")]
     [InlineData("phone")]
     [InlineData("rep")]
-    [InlineData("flag")]
-    [InlineData("flaglong")]
-    [InlineData("flagnum")]
-    [InlineData("flagutf8")]
     [InlineData("reputf")]
     [InlineData("sug")]
     [InlineData("sug2")]
@@ -680,8 +607,6 @@ public class UpstreamAffixAndCompoundTests
         var aff = D(baseName, ".aff");
         var dic = D(baseName, ".dic");
 
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
-
         using var sp = new HunspellSpellChecker(aff, dic);
 
         var wrong = D(baseName, ".wrong");
@@ -716,8 +641,6 @@ public class UpstreamAffixAndCompoundTests
     {
         var aff = D("germancompounding", ".aff");
         var dic = D("germancompounding", ".dic");
-
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
 
         using var sp = new HunspellSpellChecker(aff, dic);
 
@@ -778,8 +701,6 @@ public class UpstreamAffixAndCompoundTests
         var aff = D("germancompounding", ".aff");
         var dic = D("germancompounding", ".dic");
 
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
-
         using var sp = new HunspellSpellChecker(aff, dic);
 
         Assert.False(sp.Spell(word), $"Expected '{word}' from germancompounding.wrong to be rejected");
@@ -805,8 +726,6 @@ public class UpstreamAffixAndCompoundTests
     {
         var aff = D("germancompoundingold", ".aff");
         var dic = D("germancompoundingold", ".dic");
-
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
 
         using var sp = new HunspellSpellChecker(aff, dic);
 
@@ -867,8 +786,6 @@ public class UpstreamAffixAndCompoundTests
         var aff = D("germancompoundingold", ".aff");
         var dic = D("germancompoundingold", ".dic");
 
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
-
         using var sp = new HunspellSpellChecker(aff, dic);
 
         Assert.False(sp.Spell(word), $"Expected '{word}' from germancompoundingold.wrong to be rejected");
@@ -883,8 +800,6 @@ public class UpstreamAffixAndCompoundTests
         var aff = D("1706659", ".aff");
         var dic = D("1706659", ".dic");
 
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
-
         using var sp = new HunspellSpellChecker(aff, dic);
 
         // Sanity-check: the full forms should be rejected as per upstream test
@@ -898,7 +813,6 @@ public class UpstreamAffixAndCompoundTests
     {
         var aff = D("1706659", ".aff");
         var dic = D("1706659", ".dic");
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
 
         using var sp = new HunspellSpellChecker(aff, dic);
         var afField = typeof(HunspellSpellChecker).GetField("_affixManager", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
@@ -914,48 +828,6 @@ public class UpstreamAffixAndCompoundTests
         // Should NOT match the 'vw' rule and should therefore not be considered a compound
         Assert.False(res, "MatchesCompoundRule should not match 'arbeitsfarbige' against 'vw'");
     }
-    #endregion
-
-    #region WrongWords Tests - Nested Subdirectory Test Cases
-
-    [Theory]
-    // Nested test cases (subdirectories within test directories)
-    [InlineData("affixes/affixes")]
-    [InlineData("break/basic")]
-    [InlineData("checkcompoundpattern/basic")]
-    [InlineData("checkcompoundpattern/replacement")]
-    [InlineData("checkcompoundrep/basic")]
-    [InlineData("compoundmoresuffixes/basic")]
-    [InlineData("compoundrule/basic")]
-    [InlineData("compoundrule/compoundrule")]
-    [InlineData("compoundrule/compoundrule2")]
-    [InlineData("compoundrule/compoundrule3")]
-    [InlineData("compoundrule/compoundrule4")]
-    [InlineData("compoundrule/compoundrule5")]
-    [InlineData("compoundrule/compoundrule6")]
-    [InlineData("compoundrule/compoundrule7")]
-    [InlineData("compoundrule/star")]
-    [InlineData("compoundsyllable/syllable")]
-    [InlineData("condition/condition")]
-    [InlineData("swedish/directives")]
-    [InlineData("swedish/sv_FI")]
-    [InlineData("swedish/sv_SE")]
-    public void UpstreamWrongWords_Nested_ShouldFail(string baseName)
-    {
-        var aff = D(baseName, ".aff");
-        var dic = D(baseName, ".dic");
-
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
-
-        using var sp = new HunspellSpellChecker(aff, dic);
-
-        var wrong = D(baseName, ".wrong");
-        foreach (var w in ReadList(wrong))
-        {
-            Assert.False(sp.Spell(w), $"Expected '{w}' from {baseName}.wrong to be rejected");
-        }
-    }
-
     #endregion
 
     #region Suggestions Tests
@@ -974,17 +846,25 @@ public class UpstreamAffixAndCompoundTests
         var aff = D(baseName, ".aff");
         var dic = D(baseName, ".dic");
 
-        if (!File.Exists(dic) && !File.Exists(aff)) return;
-
         using var sp = new HunspellSpellChecker(aff, dic);
 
         var wrong = ReadList(D(baseName, ".wrong")).ToList();
         var sug = ReadList(D(baseName, ".sug")).ToList();
 
-        if (!wrong.Any() || !sug.Any()) return;
+        // checksharps has one suggestion line for two input words; its second
+        // input produces no upstream suggestions. Other historical fixtures
+        // pair one expected line with each input.
+        if (baseName == "checksharps")
+        {
+            Assert.Equal(2, wrong.Count);
+            Assert.Single(sug);
+        }
+        else
+        {
+            Assert.Equal(wrong.Count, sug.Count);
+        }
 
-        var count = Math.Min(wrong.Count, sug.Count);
-        for (int i = 0; i < count; i++)
+        for (int i = 0; i < sug.Count; i++)
         {
             var miss = wrong[i];
             var expectedLine = sug[i];
