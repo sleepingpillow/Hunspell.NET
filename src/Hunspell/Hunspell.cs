@@ -48,73 +48,77 @@ public sealed class HunspellSpellChecker : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentException.ThrowIfNullOrWhiteSpace(word);
 
-        // Helper that performs the normal lookup/affix/compound checks for a single word
-        bool CheckWord(string w)
-        {
-            // First check if it's in the dictionary
-            if (_hashManager == null) { /* no dictionary */ }
-            if (_hashManager?.Lookup(w) ?? false)
-            {
-                // If the word is marked as FORBIDDENWORD in the dictionary or via
-                // derived affix flags, it must be rejected.
-                if (_affixManager?.IsForbiddenWord(w) ?? false)
-                {
-                    return false;
-                }
-                // ONLYINCOMPOUND and NEEDAFFIX reject the dictionary surface,
-                // but an independent affix analysis may still validate it.
-                if (!(_affixManager?.IsOnlyInCompound(w) ?? false) &&
-                    !(_affixManager?.RequiresAffix(w) ?? false))
-                {
-                    return _affixManager?.KeepCaseFlag is not string keepCaseFlag ||
-                        _hashManager.LookupWithCaseRules(w, keepCaseFlag);
-                }
-            }
+        return CheckSpelling(word);
+    }
 
-            // If it's an affix-derived form (e.g., foos from foo + SFX 's'), accept it
-            if (_affixManager?.CheckAffixedWord(w) ?? false)
-            {
-                // If this affix-derived form would make a compound component
-                // forbidden due to appended flags (e.g., foobars where bars becomes
-                // COMPOUNDFORBID after appending), reject it.
-                if (_affixManager?.IsAffixDerivedFormForbiddenByCompound(w) ?? false)
-                {
-                    return false;
-                }
-                // Reject affix-derived forms that are allowed only inside
-                // compounds due to appended ONLYINCOMPOUND flags.
-                if (_affixManager?.IsAffixDerivedOnlyInCompound(w) ?? false)
-                {
-                    return false;
-                }
-                // Accept affixed-derived forms only when they're not forbidden by flags
-                if (_affixManager?.IsForbiddenWord(w) ?? false)
-                {
-                    return false;
-                }
+    private bool CheckSpelling(string word, List<string>? breakStack = null)
+    {
+        if (breakStack is not null &&
+            (breakStack.Count >= AffixManager.MaxBreakDepth || breakStack.Contains(word)))
+            return false;
 
-                return true;
-            }
-
-            // Check if word can be broken at break points and all parts are valid
-            if (_affixManager?.CheckBreak(w) ?? false)
-            {
-                return true;
-            }
-
-            // If not found, check if it's a valid compound word
-            return _affixManager?.CheckCompound(w) ?? false;
-        }
-
-        word = PrepareInput(word);
-        var trimmed = word.TrimEnd('.');
+        string prepared = PrepareInput(word);
+        string trimmed = prepared.TrimEnd('.');
         if (trimmed.Length == 0 || IsNumber(trimmed)) return true;
 
-        if (trimmed.Length != word.Length && _hashManager?.Lookup(trimmed + '.') == true && CheckWord(trimmed + '.'))
+        // Avoid a costly affix and compound search for an abbreviation explicitly
+        // listed with its final dot in a large dictionary.
+        if (prepared.Length != trimmed.Length && _hashManager is { WordCount: > 100_000 } &&
+            !_hashManager.Lookup(trimmed) && _hashManager.Lookup(trimmed + '.') &&
+            CheckWord(trimmed + '.') == WordMatch.Accepted)
             return true;
 
-        return CheckWord(trimmed) || (trimmed.Length != word.Length && CheckWord(trimmed + '.'));
+        var match = CheckWord(trimmed);
+        if (match != WordMatch.Unknown) return match == WordMatch.Accepted;
+
+        if (prepared.Length != trimmed.Length)
+        {
+            match = CheckWord(trimmed + '.');
+            if (match != WordMatch.Unknown) return match == WordMatch.Accepted;
+        }
+
+        if (_affixManager is not { HasBreakPoints: true }) return false;
+        breakStack ??= [];
+        breakStack.Add(word);
+        try
+        {
+            return _affixManager.CheckBreak(trimmed, part => CheckSpelling(part, breakStack));
+        }
+        finally
+        {
+            breakStack.RemoveAt(breakStack.Count - 1);
+        }
     }
+
+    private WordMatch CheckWord(string word)
+    {
+        if (_affixManager is null || _hashManager is null) return WordMatch.Unknown;
+
+        if (_hashManager.Lookup(word))
+        {
+            if (_affixManager.IsForbiddenWord(word)) return WordMatch.Forbidden;
+
+            // A restricted dictionary surface can have an independent affix analysis.
+            if (!_affixManager.IsOnlyInCompound(word) && !_affixManager.RequiresAffix(word))
+            {
+                return _hashManager.LookupWithCaseRules(word, _affixManager.KeepCaseFlag)
+                    ? WordMatch.Accepted
+                    : WordMatch.Unknown;
+            }
+        }
+
+        if (_affixManager.CheckAffixedWord(word))
+        {
+            if (_affixManager.IsAffixDerivedFormForbiddenByCompound(word) || _affixManager.IsForbiddenWord(word))
+                return WordMatch.Forbidden;
+            if (!_affixManager.IsAffixDerivedOnlyInCompound(word))
+                return WordMatch.Accepted;
+        }
+
+        return _affixManager.CheckCompound(word) ? WordMatch.Accepted : WordMatch.Unknown;
+    }
+
+    private enum WordMatch { Unknown, Accepted, Forbidden }
 
     private string PrepareInput(string word)
     {

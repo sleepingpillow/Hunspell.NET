@@ -93,7 +93,10 @@ internal sealed class AffixManager : IDisposable
     private readonly List<CompoundPattern> _compoundPatterns = new();
 
     // Break points (BREAK)
+    internal const int MaxBreakDepth = 10;
     private readonly List<string> _breakPoints = new();
+    private bool _hasBreakDirective;
+    internal bool HasBreakPoints => _breakPoints.Count > 0;
 
     // REP table (replacement patterns)
     private readonly List<(string from, string to)> _repTable = new();
@@ -329,6 +332,8 @@ internal sealed class AffixManager : IDisposable
         _hashManager = hashManager ?? throw new ArgumentNullException(nameof(hashManager));
 
         LoadAffix(affixPath, preloadedContent);
+        if (!_hasBreakDirective)
+            _breakPoints.AddRange(["-", "^-", "-$"]);
 
         _suggestManager = new SuggestManager(_hashManager, this);
     }
@@ -823,14 +828,15 @@ internal sealed class AffixManager : IDisposable
             case "BREAK":
                 if (parts.Length > 1)
                 {
-                    // First line contains the count, subsequent lines contain break strings
-                    if (int.TryParse(parts[1], out _))
+                    // An explicit table, including BREAK 0, replaces the defaults.
+                    if (!_hasBreakDirective)
                     {
-                        // This is the count line, ignore it
+                        _hasBreakDirective = true;
+                        if (!int.TryParse(parts[1], out _))
+                            _breakPoints.Add(parts[1]);
                     }
                     else
                     {
-                        // This is a break string
                         _breakPoints.Add(parts[1]);
                     }
                 }
@@ -5123,62 +5129,56 @@ internal sealed class AffixManager : IDisposable
         return null;
     }
 
-    /// <summary>
-    /// Check if a word can be broken at break points with all parts being valid.
-    /// </summary>
-    public bool CheckBreak(string word)
+    internal bool CheckBreak(string word, Func<string, bool> checkPart)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        // If no break points defined, no break checking
-        if (_breakPoints.Count == 0)
+        int occurrenceCount = 0;
+        foreach (var pattern in _breakPoints)
         {
-            return false;
-        }
-
-        // Try to break the word at each break point
-        return CheckBreakRecursive(word);
-    }
-
-    /// <summary>
-    /// Recursively check if a word can be broken into valid parts.
-    /// </summary>
-    private bool CheckBreakRecursive(string word)
-    {
-        // Empty word is not valid
-        if (string.IsNullOrEmpty(word))
-        {
-            return false;
-        }
-
-        // Check if the whole word is valid
-        if (_hashManager.Lookup(word) && !IsOnlyInCompound(word))
-        {
-            return true;
-        }
-        foreach (var breakPoint in _breakPoints)
-        {
-            // Find all occurrences of the break point
             int index = 0;
-            while ((index = word.IndexOf(breakPoint, index)) >= 0)
+            while ((index = word.IndexOf(pattern, index, StringComparison.Ordinal)) >= 0)
             {
-                if (index > 0 && index < word.Length - breakPoint.Length)
-                {
-                    // Break the word into parts
-                    var before = word.Substring(0, index);
-                    var after = word.Substring(index + breakPoint.Length);
-
-                    // Both parts must be valid (recursively)
-                    if (CheckBreakRecursive(before) && CheckBreakRecursive(after))
-                    {
-                        return true;
-                    }
-                }
-                index++; // Move to next position
+                if (++occurrenceCount >= MaxBreakDepth) return false;
+                index += pattern.Length;
             }
         }
 
+        foreach (var pattern in _breakPoints)
+        {
+            if (pattern.Length <= 1 || pattern.Length > word.Length) continue;
+
+            if (pattern[0] == '^' && word.AsSpan().StartsWith(pattern.AsSpan(1), StringComparison.Ordinal) &&
+                checkPart(word[(pattern.Length - 1)..]))
+                return true;
+
+            if (pattern[^1] == '$' && word.AsSpan().EndsWith(pattern.AsSpan(0, pattern.Length - 1), StringComparison.Ordinal) &&
+                checkPart(word[..^(pattern.Length - 1)]))
+                return true;
+        }
+
+        // Hunspell tries the second internal occurrence before retrying the first.
+        // This can preserve a dictionary entry beginning or ending with the separator.
+        foreach (var pattern in _breakPoints)
+        {
+            int first = word.IndexOf(pattern, StringComparison.Ordinal);
+            if (first <= 0 || first + pattern.Length >= word.Length) continue;
+            int second = word.IndexOf(pattern, first + 1, StringComparison.Ordinal);
+            if (second >= 0 && second + pattern.Length < word.Length && CheckAt(pattern, second))
+                return true;
+        }
+
+        foreach (var pattern in _breakPoints)
+        {
+            int first = word.IndexOf(pattern, StringComparison.Ordinal);
+            if (first > 0 && first + pattern.Length < word.Length && CheckAt(pattern, first))
+                return true;
+        }
+
         return false;
+
+        bool CheckAt(string pattern, int index) =>
+            checkPart(word[(index + pattern.Length)..]) && checkPart(word[..index]);
     }
 
     /// <summary>

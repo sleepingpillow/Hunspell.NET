@@ -126,5 +126,37 @@
     "Operation": "spell",
     "Input": "abc",
     "Expected": true
+  },
+  {
+    "Id": "synthetic/break-zero",
+    "Affix": "SET UTF-8\nBREAK 0\n",
+    "Dictionary": "2\nfoo\nbar\n",
+    "Operation": "spell",
+    "Input": "foo-bar",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/break-affixed-part",
+    "Affix": "SET UTF-8\nSFX S Y 1\nSFX S 0 s .\n",
+    "Dictionary": "2\nfoo/S\nbar\n",
+    "Operation": "spell",
+    "Input": "foos-bar",
+    "Expected": true
+  },
+  {
+    "Id": "synthetic/break-forbidden-whole",
+    "Affix": "SET UTF-8\nFORBIDDENWORD F\n",
+    "Dictionary": "3\nfoo\nbar\nfoo-bar/F\n",
+    "Operation": "spell",
+    "Input": "foo-bar",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/break-forbidden-part",
+    "Affix": "SET UTF-8\nFORBIDDENWORD F\n",
+    "Dictionary": "2\nfoo/F\nbar\n",
+    "Operation": "spell",
+    "Input": "foo-bar",
+    "Expected": false
   }
 ]
