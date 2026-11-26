@@ -77,7 +77,6 @@ internal sealed class AffixManager : IDisposable
     // Suggestion state exposed for SuggestManager
     internal string TryCharacters => _options.TryGetValue("TRY", out var chars) ? chars : DefaultTryCharacters;
     internal List<(string from, string to)> RepTable => _repTable;
-    internal List<(string from, string to)> IconvTable => _iconvTable;
     internal bool NoSplitSuggestions => _noSplitSuggestions;
     internal bool FullStrip => _fullStrip;
     internal bool OnlyMaxDiff => _onlyMaxDiff;
@@ -99,8 +98,8 @@ internal sealed class AffixManager : IDisposable
     // REP table (replacement patterns)
     private readonly List<(string from, string to)> _repTable = new();
     // ICONV / OCONV tables (input/output conversion rules)
-    private readonly List<(string from, string to)> _iconvTable = new();
-    private readonly List<(string from, string to)> _oconvTable = new();
+    private readonly ConversionTable _iconvTable = new();
+    private readonly ConversionTable _oconvTable = new();
     // Cache used by COMPOUNDRULE matching helpers to avoid repeated
     private readonly Dictionary<AffixBaseCacheKey, AffixBaseCacheValue> _affixBaseCache = new();
     // expensive lookups (VariantContainsFlagAfterAppend / TryFindAffixBase)
@@ -873,34 +872,11 @@ internal sealed class AffixManager : IDisposable
                 break;
 
             case "ICONV":
-                if (parts.Length > 1)
-                {
-                    if (int.TryParse(parts[1], out _))
-                    {
-                        // count line - ignore
-                    }
-                    else if (parts.Length >= 3)
-                    {
-                        var from = parts[1]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
-                        var to = parts[2]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
-                        _iconvTable.Add((from, to));
-                    }
-                }
-                break;
-
             case "OCONV":
-                if (parts.Length > 1)
+                if (parts.Length >= 3)
                 {
-                    if (int.TryParse(parts[1], out _))
-                    {
-                        // count line - ignore
-                    }
-                    else if (parts.Length >= 3)
-                    {
-                        var from = parts[1]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
-                        var to = parts[2]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
-                        _oconvTable.Add((from, to));
-                    }
+                    var table = command == "ICONV" ? _iconvTable : _oconvTable;
+                    table.Add(parts[1].Normalize(), parts[2].Normalize());
                 }
                 break;
 
@@ -1085,18 +1061,7 @@ internal sealed class AffixManager : IDisposable
         _suggestManager.GenerateSuggestions(word, suggestions);
     }
 
-    /// <summary>
-    /// Produce candidate words by applying ICONV input conversion rules.
-    /// This generates a bounded set of variants by applying each mapping
-    /// either globally or at individual occurrences. It is intentionally
-    /// conservative to avoid explosion while still catching the common
-    /// patterns used by upstream tests.
-    /// </summary>
-    public IEnumerable<string> GenerateIconvCandidates(string word)
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        return _suggestManager.GenerateIconvCandidates(word);
-    }
+    internal string ConvertInput(string word) => _iconvTable.Apply(word);
 
     // Generate candidates that are two edits away (perform another single-edit
     // pass on single-edit candidates). This helps find suggestions that require

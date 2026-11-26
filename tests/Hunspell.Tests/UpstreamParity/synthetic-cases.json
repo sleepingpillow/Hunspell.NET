@@ -102,5 +102,29 @@
     "Operation": "spell",
     "Input": "word",
     "Expected": true
+  },
+  {
+    "Id": "synthetic/number-without-wordchars",
+    "Affix": "SET UTF-8\n",
+    "Dictionary": "1\ngood\n",
+    "Operation": "spell",
+    "Input": "12.30",
+    "Expected": true
+  },
+  {
+    "Id": "synthetic/colon-wordchars-not-a-number",
+    "Affix": "SET UTF-8\nWORDCHARS 0123456789:\n",
+    "Dictionary": "1\ngood\n",
+    "Operation": "spell",
+    "Input": "12:30",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/iconv-shorter-unanchored-fallback",
+    "Affix": "SET UTF-8\nICONV 2\nICONV ab_ z\nICONV a x\n",
+    "Dictionary": "1\nxbc\n",
+    "Operation": "spell",
+    "Input": "abc",
+    "Expected": true
   }
 ]

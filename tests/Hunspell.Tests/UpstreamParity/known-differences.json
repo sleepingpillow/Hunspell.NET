@@ -3,8 +3,6 @@
   "upstream/breakdefault/good/4": false,
   "upstream/breakdefault/good/6": false,
   "upstream/breakdefault/good/7": false,
-  "synthetic/wordchars": true,
-  "synthetic/iconv-order": true,
   "synthetic/nosuggest": [
     "work",
     "work work"

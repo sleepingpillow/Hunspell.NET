@@ -55,58 +55,6 @@ internal sealed class SuggestManager
         }
     }
 
-    public IEnumerable<string> GenerateIconvCandidates(string word)
-    {
-        if (string.IsNullOrEmpty(word) || _affixManager.IconvTable.Count == 0) yield break;
-
-        var converted = ApplyIconv(word);
-        if (!string.Equals(converted, word, StringComparison.Ordinal))
-        {
-            yield return converted;
-        }
-    }
-
-    private string ApplyIconv(string word)
-    {
-        var converted = new StringBuilder(word.Length);
-
-        for (int index = 0; index < word.Length;)
-        {
-            (string from, string to)? bestMatch = null;
-
-            foreach (var rule in _affixManager.IconvTable)
-            {
-                if (string.IsNullOrEmpty(rule.from) || index + rule.from.Length > word.Length)
-                {
-                    continue;
-                }
-
-                if (!word.AsSpan(index, rule.from.Length).SequenceEqual(rule.from))
-                {
-                    continue;
-                }
-
-                if (bestMatch is null || rule.from.Length > bestMatch.Value.from.Length)
-                {
-                    bestMatch = rule;
-                }
-            }
-
-            if (bestMatch is { } match)
-            {
-                converted.Append(match.to);
-                index += match.from.Length;
-            }
-            else
-            {
-                converted.Append(word[index]);
-                index++;
-            }
-        }
-
-        return converted.ToString();
-    }
-
     private static bool TryAddSuggestion(List<string> suggestions, HashSet<string> seenSuggestions, string? suggestion)
     {
         if (string.IsNullOrEmpty(suggestion) || !seenSuggestions.Add(suggestion))
