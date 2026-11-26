@@ -160,7 +160,7 @@ public class FlagCompoundForbidEdgeTests
                 var found = (bool)tfMethod!.Invoke(af, parameters)!;
                 Console.WriteLine($"TryFindAffixBase('foobars') => {found} (base='{parameters[2]}', kind='{parameters[3]}', appended='{parameters[4]}', count='{parameters[5]}')");
 
-                var checkBreak = (bool)af.GetType().GetMethod("CheckBreak")!.Invoke(af, new object[] { "foobars" })!;
+                var checkBreak = ((AffixManager)af).CheckBreak("foobars", sp.Spell);
                 Console.WriteLine($"AffixManager.CheckBreak('foobars') => {checkBreak}");
 
                 var isForbidden = (bool)af.GetType().GetMethod("IsForbiddenWord")!.Invoke(af, new object[] { "foobars" })!;

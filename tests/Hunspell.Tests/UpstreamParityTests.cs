@@ -110,6 +110,7 @@ public sealed class UpstreamParityTests(ITestOutputHelper output)
                 "spell" => temporary.Checker.Spell(testCase.Input),
                 "suggest" => temporary.Checker.Suggest(testCase.Input),
                 "remove" => RemoveAndCheck(temporary.Checker, testCase.Input),
+                "runtime" when testCase.Steps is not null => RunRuntimeSteps(temporary.Checker, testCase.Steps),
                 _ => throw new InvalidDataException($"Unknown reference operation: {testCase.Operation}")
             };
             Observe(testCase.Id, testCase.Expected, actual);
@@ -151,8 +152,28 @@ public sealed class UpstreamParityTests(ITestOutputHelper output)
         return checker.Spell(word);
     }
 
+    private static List<bool> RunRuntimeSteps(HunspellSpellChecker checker, RuntimeStep[] steps)
+    {
+        var results = new List<bool>();
+        foreach (var step in steps)
+        {
+            switch (step.Operation)
+            {
+                case "spell": results.Add(checker.Spell(step.Word)); break;
+                case "remove": Assert.True(checker.Remove(step.Word)); break;
+                case "add": Assert.True(checker.Add(step.Word)); break;
+                default: throw new InvalidDataException($"Unknown runtime operation: {step.Operation}");
+            }
+        }
+
+        return results;
+    }
+
+    private sealed record RuntimeStep(string Operation, string Word);
+
     private sealed record ReferenceCase(
-        string Id, string Affix, string Dictionary, string Operation, string Input, JsonElement Expected);
+        string Id, string Affix, string Dictionary, string Operation, string Input, JsonElement Expected,
+        RuntimeStep[]? Steps = null);
 
     private static Dictionary<string, JsonElement> ReadBaseline()
     {

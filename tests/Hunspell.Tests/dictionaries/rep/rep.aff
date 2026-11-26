@@ -1,9 +1,13 @@
+SET UTF-8
 REP 8
 REP ph f
 REP f ph
 REP shun tion
 REP shuns tions
-REP '
+REP ' _
 REP s 's
-REP ú u
-REP á a
+REP vinteún vinte_e_un
+REP foo bar
+
+SFX A Y 1
+SFX A 0 's .

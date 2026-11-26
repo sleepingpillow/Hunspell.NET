@@ -62,5 +62,345 @@
     "Operation": "remove",
     "Input": "word",
     "Expected": false
+  },
+  {
+    "Id": "synthetic/escaped-slash-with-affix",
+    "Affix": "SET UTF-8\nSFX S Y 1\nSFX S 0 s .\n",
+    "Dictionary": "1\nand\\/or/S po:noun\n",
+    "Operation": "spell",
+    "Input": "and/ors",
+    "Expected": true
+  },
+  {
+    "Id": "synthetic/keepcase-capitalized-variant",
+    "Affix": "SET UTF-8\nKEEPCASE K\n",
+    "Dictionary": "1\nLondon/K\n",
+    "Operation": "spell",
+    "Input": "LONDON",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/keepcase-lowercase-variant",
+    "Affix": "SET UTF-8\nKEEPCASE K\n",
+    "Dictionary": "1\nLondon/K\n",
+    "Operation": "spell",
+    "Input": "london",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/numeric-flag-forbidden",
+    "Affix": "SET UTF-8\nFLAG num\nFORBIDDENWORD 1\n",
+    "Dictionary": "2\nword/10\nstop/1\n",
+    "Operation": "spell",
+    "Input": "stop",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/long-flag-token-boundary",
+    "Affix": "SET UTF-8\nFLAG long\nFORBIDDENWORD BC\n",
+    "Dictionary": "1\nword/ABCD\n",
+    "Operation": "spell",
+    "Input": "word",
+    "Expected": true
+  },
+  {
+    "Id": "synthetic/number-without-wordchars",
+    "Affix": "SET UTF-8\n",
+    "Dictionary": "1\ngood\n",
+    "Operation": "spell",
+    "Input": "12.30",
+    "Expected": true
+  },
+  {
+    "Id": "synthetic/colon-wordchars-not-a-number",
+    "Affix": "SET UTF-8\nWORDCHARS 0123456789:\n",
+    "Dictionary": "1\ngood\n",
+    "Operation": "spell",
+    "Input": "12:30",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/iconv-shorter-unanchored-fallback",
+    "Affix": "SET UTF-8\nICONV 2\nICONV ab_ z\nICONV a x\n",
+    "Dictionary": "1\nxbc\n",
+    "Operation": "spell",
+    "Input": "abc",
+    "Expected": true
+  },
+  {
+    "Id": "synthetic/break-zero",
+    "Affix": "SET UTF-8\nBREAK 0\n",
+    "Dictionary": "2\nfoo\nbar\n",
+    "Operation": "spell",
+    "Input": "foo-bar",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/break-affixed-part",
+    "Affix": "SET UTF-8\nSFX S Y 1\nSFX S 0 s .\n",
+    "Dictionary": "2\nfoo/S\nbar\n",
+    "Operation": "spell",
+    "Input": "foos-bar",
+    "Expected": true
+  },
+  {
+    "Id": "synthetic/break-forbidden-whole",
+    "Affix": "SET UTF-8\nFORBIDDENWORD F\n",
+    "Dictionary": "3\nfoo\nbar\nfoo-bar/F\n",
+    "Operation": "spell",
+    "Input": "foo-bar",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/break-forbidden-part",
+    "Affix": "SET UTF-8\nFORBIDDENWORD F\n",
+    "Dictionary": "2\nfoo/F\nbar\n",
+    "Operation": "spell",
+    "Input": "foo-bar",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/exact-word-split",
+    "Affix": "SET UTF-8\nTRY o\n",
+    "Dictionary": "2\nfoo\nbar\n",
+    "Operation": "suggest",
+    "Input": "foobar",
+    "Expected": [
+      "foo bar"
+    ]
+  },
+  {
+    "Id": "synthetic/listed-pair-with-nosplitsugs",
+    "Affix": "SET UTF-8\nTRY o\nNOSPLITSUGS\n",
+    "Dictionary": "1\nfoo bar\n",
+    "Operation": "suggest",
+    "Input": "foobar",
+    "Expected": [
+      "foo bar"
+    ]
+  },
+  {
+    "Id": "synthetic/nosuggest-on-affixed-replacement",
+    "Affix": "SET UTF-8\nTRY o\nNOSUGGEST N\nREP 1\nREP a o\nSFX S Y 1\nSFX S 0 s .\n",
+    "Dictionary": "1\nwork/SN\n",
+    "Operation": "suggest",
+    "Input": "warks",
+    "Expected": []
+  },
+  {
+    "Id": "synthetic/oconv-does-not-reprocess-output",
+    "Affix": "SET UTF-8\nTRY o\nOCONV 2\nOCONV o 0\nOCONV 0 x\n",
+    "Dictionary": "1\nwork\n",
+    "Operation": "suggest",
+    "Input": "wark",
+    "Expected": [
+      "w0rk"
+    ]
+  },
+  {
+    "Id": "synthetic/remove-restore-affix-and-compound",
+    "Affix": "SET UTF-8\nCOMPOUNDFLAG C\nCOMPOUNDMIN 2\nSFX S Y 1\nSFX S 0 s .\n",
+    "Dictionary": "2\nword/SC\nbar/C\n",
+    "Operation": "runtime",
+    "Input": "word",
+    "Steps": [
+      {
+        "Operation": "spell",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "words"
+      },
+      {
+        "Operation": "spell",
+        "Word": "wordbar"
+      },
+      {
+        "Operation": "remove",
+        "Word": "word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "words"
+      },
+      {
+        "Operation": "spell",
+        "Word": "wordbar"
+      },
+      {
+        "Operation": "add",
+        "Word": "word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "words"
+      },
+      {
+        "Operation": "spell",
+        "Word": "wordbar"
+      }
+    ],
+    "Expected": [
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      true
+    ]
+  },
+  {
+    "Id": "synthetic/remove-restore-affixed-surface",
+    "Affix": "SET UTF-8\nSFX S Y 1\nSFX S 0 s .\n",
+    "Dictionary": "1\nword/S\n",
+    "Operation": "runtime",
+    "Input": "words",
+    "Steps": [
+      {
+        "Operation": "spell",
+        "Word": "words"
+      },
+      {
+        "Operation": "remove",
+        "Word": "words"
+      },
+      {
+        "Operation": "spell",
+        "Word": "word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "words"
+      },
+      {
+        "Operation": "spell",
+        "Word": "Words"
+      },
+      {
+        "Operation": "add",
+        "Word": "words"
+      },
+      {
+        "Operation": "spell",
+        "Word": "words"
+      }
+    ],
+    "Expected": [
+      true,
+      true,
+      false,
+      false,
+      true
+    ]
+  },
+  {
+    "Id": "synthetic/add-removes-dictionary-forbidden-flag",
+    "Affix": "SET UTF-8\nFORBIDDENWORD F\nSFX S Y 1\nSFX S 0 s .\n",
+    "Dictionary": "1\nstop/FS\n",
+    "Operation": "runtime",
+    "Input": "stop",
+    "Steps": [
+      {
+        "Operation": "spell",
+        "Word": "stop"
+      },
+      {
+        "Operation": "add",
+        "Word": "stop"
+      },
+      {
+        "Operation": "spell",
+        "Word": "stop"
+      },
+      {
+        "Operation": "spell",
+        "Word": "stops"
+      }
+    ],
+    "Expected": [
+      false,
+      true,
+      true
+    ]
+  },
+  {
+    "Id": "synthetic/runtime-input-conversion",
+    "Affix": "SET UTF-8\nICONV 1\nICONV W w\n",
+    "Dictionary": "1\nword\n",
+    "Operation": "runtime",
+    "Input": "Word",
+    "Steps": [
+      {
+        "Operation": "remove",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "word"
+      },
+      {
+        "Operation": "add",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "word"
+      }
+    ],
+    "Expected": [
+      false,
+      true
+    ]
+  },
+  {
+    "Id": "synthetic/remove-title-case-fallback",
+    "Affix": "SET UTF-8\n",
+    "Dictionary": "1\nword\n",
+    "Operation": "runtime",
+    "Input": "Word",
+    "Steps": [
+      {
+        "Operation": "remove",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "WORD"
+      },
+      {
+        "Operation": "add",
+        "Word": "Word"
+      },
+      {
+        "Operation": "spell",
+        "Word": "WORD"
+      }
+    ],
+    "Expected": [
+      true,
+      false,
+      false,
+      true
+    ]
   }
 ]

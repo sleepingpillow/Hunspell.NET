@@ -3,8 +3,6 @@
 // Licensed under MPL 1.1/GPL 2.0/LGPL 2.1
 // Based on Hunspell by László Németh and contributors
 
-using System.Globalization;
-
 namespace Hunspell;
 
 /// <summary>
@@ -50,187 +48,107 @@ public sealed class HunspellSpellChecker : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentException.ThrowIfNullOrWhiteSpace(word);
 
-        // Helper that performs the normal lookup/affix/compound checks for a single word
-        bool CheckWord(string w)
+        return CheckSpelling(word);
+    }
+
+    private bool CheckSpelling(string word, List<string>? breakStack = null)
+    {
+        if (breakStack is not null &&
+            (breakStack.Count >= AffixManager.MaxBreakDepth || breakStack.Contains(word)))
+            return false;
+
+        string prepared = PrepareInput(word);
+        string trimmed = prepared.TrimEnd('.');
+        if (trimmed.Length == 0 || IsNumber(trimmed)) return true;
+
+        // Avoid a costly affix and compound search for an abbreviation explicitly
+        // listed with its final dot in a large dictionary.
+        if (prepared.Length != trimmed.Length && _hashManager is { WordCount: > 100_000 } &&
+            !_hashManager.IsRuntimeRemoved(trimmed) && !_hashManager.Lookup(trimmed) && _hashManager.Lookup(trimmed + '.') &&
+            CheckWord(trimmed + '.') == WordMatch.Accepted)
+            return true;
+
+        var match = CheckWord(trimmed);
+        if (match != WordMatch.Unknown) return match == WordMatch.Accepted;
+
+        if (prepared.Length != trimmed.Length)
         {
-            // First check if it's in the dictionary
-            if (_hashManager == null) { /* no dictionary */ }
-            if (_hashManager?.Lookup(w) ?? false)
-            {
-                // If the word is marked as FORBIDDENWORD in the dictionary or via
-                // derived affix flags, it must be rejected.
-                if (_affixManager?.IsForbiddenWord(w) ?? false)
-                {
-                    return false;
-                }
-                // ONLYINCOMPOUND and NEEDAFFIX reject the dictionary surface,
-                // but an independent affix analysis may still validate it.
-                if (!(_affixManager?.IsOnlyInCompound(w) ?? false) &&
-                    !(_affixManager?.RequiresAffix(w) ?? false))
-                {
-                    // enforce KEEPCASE: if the dictionary entry(s) are flagged
-                    // with the KEEPCASE flag, reject forms that are ALLCAP or
-                    // initial-capitalized (e.g., "ABC" or "Abc")
-                    if (_affixManager?.KeepCaseFlag is string kf)
-                    {
-                        var variants = _hashManager.GetWordFlagVariants(w).ToList();
-                        if (variants.Count > 0 && variants.Any(v => !string.IsNullOrEmpty(v) && v.Contains(kf)))
-                        {
-                            // detect capitalization classes
-                            bool isAllCaps = string.Equals(w, w.ToUpperInvariant(), StringComparison.Ordinal);
-                            bool isInitCap = char.IsUpper(w[0]) && string.Equals(w.Substring(1), w.Substring(1).ToLowerInvariant(), StringComparison.Ordinal);
-                            if (isAllCaps || isInitCap)
-                            {
-                                // CHECKSHARPS exception: if enabled and word contains ß, allow InitCap
-                                // (German words with ß are allowed to be capitalized even if KEEPCASE is set)
-                                if (!(_affixManager.CheckSharps && w.Contains('ß') && isInitCap))
-                                {
-                                    return false;
-                                }
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-            }
-
-            // If it's an affix-derived form (e.g., foos from foo + SFX 's'), accept it
-            if (_affixManager?.CheckAffixedWord(w) ?? false)
-            {
-                // If this affix-derived form would make a compound component
-                // forbidden due to appended flags (e.g., foobars where bars becomes
-                // COMPOUNDFORBID after appending), reject it.
-                if (_affixManager?.IsAffixDerivedFormForbiddenByCompound(w) ?? false)
-                {
-                    return false;
-                }
-                // Reject affix-derived forms that are allowed only inside
-                // compounds due to appended ONLYINCOMPOUND flags.
-                if (_affixManager?.IsAffixDerivedOnlyInCompound(w) ?? false)
-                {
-                    return false;
-                }
-                // Accept affixed-derived forms only when they're not forbidden by flags
-                if (_affixManager?.IsForbiddenWord(w) ?? false)
-                {
-                    return false;
-                }
-
-                return true;
-            }
-
-            // Check if word can be broken at break points and all parts are valid
-            if (_affixManager?.CheckBreak(w) ?? false)
-            {
-                return true;
-            }
-
-            // If not found, check if it's a valid compound word
-            return _affixManager?.CheckCompound(w) ?? false;
+            match = CheckWord(trimmed + '.');
+            if (match != WordMatch.Unknown) return match == WordMatch.Accepted;
         }
 
-        // Try the original word first
-        if (CheckWord(word)) return true;
-
-        // If the affix file defines WORDCHARS and the input consists only
-        // of characters from that set, accept it as valid. This mirrors
-        // upstream Hunspell where numeric tokens or other sequences built
-        // from WORDCHARS are treated as valid words.
-        if (_affixManager?.WordChars is string wc && !string.IsNullOrEmpty(wc))
+        if (_affixManager is not { HasBreakPoints: true }) return false;
+        breakStack ??= [];
+        breakStack.Add(word);
+        try
         {
-            bool allAllowed = true;
-            foreach (var ch in word)
-            {
-                if (wc.IndexOf(ch) < 0)
-                {
-                    allAllowed = false;
-                    break;
-                }
-            }
-            if (allAllowed)
-            {
-                // When WORDCHARS contains punctuation-like characters we should
-                // still reject obviously malformed tokens such as those that
-                // start or end with a punctuation character or contain two
-                // punctuation characters in a row. Build a punctuation set
-                // derived from WORDCHARS and apply simple sanity rules.
-                var punctSet = new HashSet<char>();
-                foreach (var ch in wc)
-                {
-                    if (!char.IsLetterOrDigit(ch)) punctSet.Add(ch);
-                }
+            return _affixManager.CheckBreak(trimmed, part => CheckSpelling(part, breakStack));
+        }
+        finally
+        {
+            breakStack.RemoveAt(breakStack.Count - 1);
+        }
+    }
 
-                // Accept only if token doesn't start or end with punctuation
-                if (punctSet.Contains(word[0]) || punctSet.Contains(word[^1]))
-                {
-                    // malformed (starts/ends with punctuation)
-                }
-                else
-                {
-                    // Reject sequences with consecutive punctuation characters
-                    bool hasConsecutivePunct = false;
-                    for (int j = 1; j < word.Length; j++)
-                    {
-                        if (punctSet.Contains(word[j]) && punctSet.Contains(word[j - 1]))
-                        {
-                            hasConsecutivePunct = true;
-                            break;
-                        }
-                    }
-                    if (!hasConsecutivePunct)
-                    {
-                        return true;
-                    }
-                }
+    private WordMatch CheckWord(string word)
+    {
+        if (_affixManager is null || _hashManager is null) return WordMatch.Unknown;
+        if (_hashManager.IsRuntimeRemoved(word)) return WordMatch.Forbidden;
+
+        if (_hashManager.Lookup(word))
+        {
+            if (_affixManager.IsForbiddenWord(word)) return WordMatch.Forbidden;
+
+            // A restricted dictionary surface can have an independent affix analysis.
+            if (!_affixManager.IsOnlyInCompound(word) && !_affixManager.RequiresAffix(word))
+            {
+                return _hashManager.LookupWithCaseRules(word, _affixManager.KeepCaseFlag)
+                    ? WordMatch.Accepted
+                    : WordMatch.Unknown;
             }
         }
 
-        // If the affix file defines IGNORE characters, try removing them and
-        // re-checking the stripped word. This permits words that only differ
-        // by optional punctuation markers (e.g., Armenian punctuation) to be
-        // accepted when the underlying dictionary contains the base form.
-        if (_affixManager?.IgnoreChars is string ignore && !string.IsNullOrEmpty(ignore))
+        if (_affixManager.CheckAffixedWord(word))
         {
-            var cleaned = new string(word.Where(ch => !ignore.Contains(ch)).ToArray());
-            if (!string.Equals(cleaned, word, StringComparison.Ordinal) && CheckWord(cleaned)) return true;
+            if (_affixManager.IsAffixDerivedFormForbiddenByCompound(word) || _affixManager.IsForbiddenWord(word))
+                return WordMatch.Forbidden;
+            if (!_affixManager.IsAffixDerivedOnlyInCompound(word))
+                return WordMatch.Accepted;
         }
 
-        // If ICONV rules exist, try transforming the input using ICONV mappings
-        // and re-run the checks on each transformed candidate.
-        if (_affixManager is not null)
+        return _affixManager.CheckCompound(word) ? WordMatch.Accepted : WordMatch.Unknown;
+    }
+
+    private enum WordMatch { Unknown, Accepted, Forbidden }
+
+    private string PrepareInput(string word) => NormalizeInput(word).TrimStart(' ');
+
+    private string NormalizeInput(string word)
+    {
+        word = _affixManager?.ConvertInput(word) ?? word;
+        if (_affixManager?.IgnoreChars is { Length: > 0 } ignored &&
+            word.AsSpan().IndexOfAny(ignored.AsSpan()) >= 0)
         {
-            foreach (var cand in _affixManager.GenerateIconvCandidates(word))
-            {
-                if (CheckWord(cand)) return true;
-            }
+            word = new string(word.Where(ch => !ignored.Contains(ch)).ToArray());
         }
 
-        // The exact (unsuccessful) checks above can sometimes fail due to
-        // trailing punctuation (e.g. "etc.", "HUNSPELL..."). Upstream Hunspell
-        // treats many trailing dots as sentence punctuation and still accepts
-        // the base word — try stripping trailing '.' characters and re-run
-        // the same checks.
-        // Note: we intentionally only trim '.' here to avoid accidentally
-        // transforming other meaningful characters that may belong to words
-        // (e.g. inner dots in 'OpenOffice.org').
-        var trimmed = word.TrimEnd('.');
-        if (!string.Equals(trimmed, word, StringComparison.Ordinal))
-        {
-            if (CheckWord(trimmed)) return true;
+        return word;
+    }
 
-            // Also try ICONV candidates for trimmed input
-            if (_affixManager is not null)
-            {
-                foreach (var cand in _affixManager.GenerateIconvCandidates(trimmed))
-                {
-                    if (CheckWord(cand)) return true;
-                }
-            }
+    private static bool IsNumber(string word)
+    {
+        bool needsDigit = true;
+        foreach (char ch in word)
+        {
+            if (ch is (>= '0' and <= '9') or (>= '\u0660' and <= '\u0669') or (>= '\u06F0' and <= '\u06F9'))
+                needsDigit = false;
+            else if (!needsDigit && ch is '.' or '-' or ',')
+                needsDigit = true;
+            else
+                return false;
         }
 
-        return false;
-
+        return !needsDigit;
     }
 
     /// <summary>
@@ -244,6 +162,8 @@ public sealed class HunspellSpellChecker : IDisposable
         ArgumentException.ThrowIfNullOrWhiteSpace(word);
 
         var suggestions = new List<string>();
+        string prepared = PrepareInput(word).TrimEnd('.');
+        if (prepared.Length == 0) return suggestions;
 
         // If the word is correctly spelled, no suggestions needed. For very large
         // dictionaries, avoid expensive compound/affix recursion in Spell by
@@ -253,7 +173,7 @@ public sealed class HunspellSpellChecker : IDisposable
         bool isCorrect;
         if (_hashManager is not null && _hashManager.WordCount > 100_000)
         {
-            isCorrect = _hashManager.Lookup(word);
+            isCorrect = _hashManager.LookupWithCaseRules(prepared, _affixManager?.KeepCaseFlag);
         }
         else
         {
@@ -265,8 +185,12 @@ public sealed class HunspellSpellChecker : IDisposable
             return suggestions;
         }
 
-        // Generate suggestions using the suggestion manager
-        _affixManager?.GenerateSuggestions(word, suggestions);
+        if (_affixManager is null) return suggestions;
+
+        _affixManager.GenerateSuggestions(prepared, suggestions);
+        for (int i = 0; i < suggestions.Count; i++)
+            suggestions[i] = _affixManager.ConvertOutput(suggestions[i]);
+        suggestions.RemoveAll(suggestion => string.Equals(suggestion, word, StringComparison.Ordinal));
 
         return suggestions;
     }
@@ -281,7 +205,12 @@ public sealed class HunspellSpellChecker : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentException.ThrowIfNullOrWhiteSpace(word);
 
-        return _hashManager?.Add(word) ?? false;
+        string normalized = NormalizeInput(word);
+        if (normalized.Length == 0 || _hashManager?.Add(normalized, _affixManager?.ForbiddenWordFlag) != true)
+            return false;
+
+        _affixManager?.InvalidateDictionaryCaches();
+        return true;
     }
 
     /// <summary>
@@ -294,7 +223,11 @@ public sealed class HunspellSpellChecker : IDisposable
         ObjectDisposedException.ThrowIf(_disposed, this);
         ArgumentException.ThrowIfNullOrWhiteSpace(word);
 
-        return _hashManager?.Remove(word) ?? false;
+        string normalized = NormalizeInput(word);
+        if (normalized.Length == 0 || _hashManager?.Remove(normalized) != true) return false;
+
+        _affixManager?.InvalidateDictionaryCaches();
+        return true;
     }
 
     /// <summary>

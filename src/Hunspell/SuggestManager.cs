@@ -4,8 +4,6 @@
 
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Text.RegularExpressions;
 
 namespace Hunspell;
 
@@ -24,16 +22,20 @@ internal sealed class SuggestManager
     {
         var seenSuggestions = new HashSet<string>(suggestions, StringComparer.Ordinal);
 
+        foreach (var variant in _hashManager.GetCaseVariants(word))
+        {
+            if (_affixManager.CanSuggestWord(variant))
+                TryAddSuggestion(suggestions, seenSuggestions, variant);
+        }
+
         GenerateSubstitutionSuggestions(word, suggestions, seenSuggestions);
         GenerateInsertionSuggestions(word, suggestions, seenSuggestions);
         GenerateDeletionSuggestions(word, suggestions, seenSuggestions);
         GenerateSwapSuggestions(word, suggestions, seenSuggestions);
         GenerateRepSuggestions(word, suggestions, seenSuggestions);
 
-        if (!_affixManager.NoSplitSuggestions)
-        {
-            GenerateSplitSuggestions(word, suggestions, seenSuggestions);
-        }
+        if (GenerateSplitSuggestions(word, suggestions, seenSuggestions))
+            return;
 
         GeneratePossessiveSuggestions(word, suggestions, seenSuggestions);
 
@@ -53,58 +55,6 @@ internal sealed class SuggestManager
         {
             suggestions.RemoveRange(10, suggestions.Count - 10);
         }
-    }
-
-    public IEnumerable<string> GenerateIconvCandidates(string word)
-    {
-        if (string.IsNullOrEmpty(word) || _affixManager.IconvTable.Count == 0) yield break;
-
-        var converted = ApplyIconv(word);
-        if (!string.Equals(converted, word, StringComparison.Ordinal))
-        {
-            yield return converted;
-        }
-    }
-
-    private string ApplyIconv(string word)
-    {
-        var converted = new StringBuilder(word.Length);
-
-        for (int index = 0; index < word.Length;)
-        {
-            (string from, string to)? bestMatch = null;
-
-            foreach (var rule in _affixManager.IconvTable)
-            {
-                if (string.IsNullOrEmpty(rule.from) || index + rule.from.Length > word.Length)
-                {
-                    continue;
-                }
-
-                if (!word.AsSpan(index, rule.from.Length).SequenceEqual(rule.from))
-                {
-                    continue;
-                }
-
-                if (bestMatch is null || rule.from.Length > bestMatch.Value.from.Length)
-                {
-                    bestMatch = rule;
-                }
-            }
-
-            if (bestMatch is { } match)
-            {
-                converted.Append(match.to);
-                index += match.from.Length;
-            }
-            else
-            {
-                converted.Append(word[index]);
-                index++;
-            }
-        }
-
-        return converted.ToString();
     }
 
     private static bool TryAddSuggestion(List<string> suggestions, HashSet<string> seenSuggestions, string? suggestion)
@@ -173,7 +123,7 @@ internal sealed class SuggestManager
         {
             if (suggestions.Count >= 10) break;
 
-            if (_hashManager.Lookup(cand1))
+            if (_affixManager.CanSuggestWord(cand1))
             {
                 TryAddSuggestion(suggestions, seenSuggestions, cand1);
                 if (suggestions.Count >= 10) break;
@@ -190,7 +140,7 @@ internal sealed class SuggestManager
                         span[state.i] = state.c;
                     });
                     candidate2Seen++;
-                    if (_hashManager.Lookup(cand2))
+                    if (_affixManager.CanSuggestWord(cand2))
                     {
                         TryAddSuggestion(suggestions, seenSuggestions, cand2);
                         if (suggestions.Count >= 10) break;
@@ -203,7 +153,7 @@ internal sealed class SuggestManager
             {
                 var cand2 = cand1.Remove(i, 1);
                 candidate2Seen++;
-                if (_hashManager.Lookup(cand2))
+                if (_affixManager.CanSuggestWord(cand2))
                 {
                     TryAddSuggestion(suggestions, seenSuggestions, cand2);
                     if (suggestions.Count >= 10) break;
@@ -216,7 +166,7 @@ internal sealed class SuggestManager
                 {
                     var cand2 = cand1.Insert(i, c.ToString());
                     candidate2Seen++;
-                    if (_hashManager.Lookup(cand2))
+                    if (_affixManager.CanSuggestWord(cand2))
                     {
                         TryAddSuggestion(suggestions, seenSuggestions, cand2);
                         if (suggestions.Count >= 10) break;
@@ -233,7 +183,7 @@ internal sealed class SuggestManager
                     (span[state.i], span[state.i + 1]) = (span[state.i + 1], span[state.i]);
                 });
                 candidate2Seen++;
-                if (_hashManager.Lookup(cand2))
+                if (_affixManager.CanSuggestWord(cand2))
                 {
                     TryAddSuggestion(suggestions, seenSuggestions, cand2);
                     if (suggestions.Count >= 10) break;
@@ -256,7 +206,7 @@ internal sealed class SuggestManager
                     scanned++;
                     if (string.Equals(w, word, StringComparison.OrdinalIgnoreCase)) continue;
                     int d = BoundedLevenshtein(word, w, maxDist);
-                    if (d >= 0 && d <= maxDist)
+                    if (d >= 0 && _affixManager.CanSuggestWord(w))
                     {
                         TryAddSuggestion(suggestions, seenSuggestions, w);
                     }
@@ -313,7 +263,7 @@ internal sealed class SuggestManager
                     span[state.i] = state.c;
                 });
 
-                if (_hashManager.Lookup(suggestion))
+                if (_affixManager.CanSuggestWord(suggestion))
                 {
                     TryAddSuggestion(suggestions, seenSuggestions, suggestion);
                 }
@@ -331,7 +281,7 @@ internal sealed class SuggestManager
             {
                 var suggestion = word.Insert(i, c.ToString());
 
-                if (_hashManager.Lookup(suggestion))
+                if (_affixManager.CanSuggestWord(suggestion))
                 {
                     TryAddSuggestion(suggestions, seenSuggestions, suggestion);
                 }
@@ -345,7 +295,7 @@ internal sealed class SuggestManager
         {
             var suggestion = word.Remove(i, 1);
 
-            if (_hashManager.Lookup(suggestion))
+            if (_affixManager.CanSuggestWord(suggestion))
             {
                 TryAddSuggestion(suggestions, seenSuggestions, suggestion);
             }
@@ -362,7 +312,7 @@ internal sealed class SuggestManager
                 (span[state.i], span[state.i + 1]) = (span[state.i + 1], span[state.i]);
             });
 
-            if (_hashManager.Lookup(suggestion))
+            if (_affixManager.CanSuggestWord(suggestion))
             {
                 TryAddSuggestion(suggestions, seenSuggestions, suggestion);
             }
@@ -390,7 +340,7 @@ internal sealed class SuggestManager
                 while ((start = word.IndexOf(from, start, StringComparison.OrdinalIgnoreCase)) >= 0)
                 {
                     var candidate = word.Substring(0, start) + to + word.Substring(start + from.Length);
-                    if (_hashManager.Lookup(candidate) || (useAffixCheck && _affixManager.CheckAffixedWord(candidate)))
+                    if (IsReplacementCandidate(candidate, useAffixCheck))
                     {
                         if (TryAddSuggestion(suggestions, seenSuggestions, candidate) && suggestions.Count >= 10) return;
                     }
@@ -405,7 +355,7 @@ internal sealed class SuggestManager
             foreach (var candidate in _hashManager.GetPhReplacementCandidates(word))
             {
                 if (suggestions.Count >= 10) break;
-                if (_hashManager.Lookup(candidate) || (useAffixCheck && _affixManager.CheckAffixedWord(candidate)))
+                if (IsReplacementCandidate(candidate, useAffixCheck))
                 {
                     if (TryAddSuggestion(suggestions, seenSuggestions, candidate) && suggestions.Count >= 10) break;
                 }
@@ -416,120 +366,54 @@ internal sealed class SuggestManager
         }
     }
 
-    private void GenerateSplitSuggestions(string word, List<string> suggestions, HashSet<string> seenSuggestions)
+    private bool IsReplacementCandidate(string candidate, bool allowAffixes) =>
+        _affixManager.CanSuggestWord(candidate, allowAffixes) ||
+        (candidate.Contains(' ') && candidate.Split(' ').All(part => _affixManager.CanSuggestWord(part, allowAffixes)));
+
+    private bool GenerateSplitSuggestions(string word, List<string> suggestions, HashSet<string> seenSuggestions)
     {
-        if (word.Contains(' ')) return;
+        if (word.Length < 3) return false;
 
-        for (int i = 1; i < word.Length && suggestions.Count < 10; i++)
+        bool allowAffixes = _hashManager.WordCount <= 50_000;
+        bool allowDash = _affixManager.SuggestHyphenatedSplits;
+        var listedPairs = new List<string>();
+        var splitPairs = new List<string>();
+        for (int i = 1; i < word.Length; i++)
         {
-            var left = word.Substring(0, i);
-            var right = word.Substring(i);
+            if (char.IsLowSurrogate(word[i])) continue;
 
-            if (_hashManager.Lookup(left) && _hashManager.Lookup(right))
-            {
-                var candidate = left + " " + right;
-                TryAddSuggestion(suggestions, seenSuggestions, candidate);
-            }
+            var left = word[..i];
+            var right = word[i..];
+            var spaced = left + ' ' + right;
+            var hyphenated = allowDash ? left + '-' + right : null;
+            if (_affixManager.CanSuggestWord(spaced, allowAffixes))
+                listedPairs.Add(spaced);
+            if (hyphenated is not null && _affixManager.CanSuggestWord(hyphenated, allowAffixes))
+                listedPairs.Add(hyphenated);
 
-            if (right.Contains('"') || left.Contains('"'))
+            if (_affixManager.NoSplitSuggestions || listedPairs.Count > 0) continue;
+            if (_affixManager.CanSuggestWord(left, allowAffixes) && _affixManager.CanSuggestWord(right, allowAffixes))
             {
-                var candidate2 = word.Replace('"', ' ');
-                var parts = candidate2.Split(' ');
-                if (parts.Length == 2 && _hashManager.Lookup(parts[0]) && _hashManager.Lookup(parts[1]))
-                {
-                    TryAddSuggestion(suggestions, seenSuggestions, candidate2);
-                }
+                splitPairs.Add(spaced);
+                if (hyphenated is not null && left.Length > 1 && right.Length > 1)
+                    splitPairs.Add(hyphenated);
             }
         }
 
-        for (int i = 1; i < word.Length - 1 && suggestions.Count < 10; i++)
+        if (listedPairs.Count > 0)
         {
-            for (int j = i + 1; j < word.Length && suggestions.Count < 10; j++)
-            {
-                var a = word.Substring(0, i);
-                var b = word.Substring(i, j - i);
-                var c = word.Substring(j);
-                if (_hashManager.Lookup(a) && _hashManager.Lookup(b) && _hashManager.Lookup(c))
-                {
-                    var candidate = string.Join(" ", new[] { a, b, c });
-                    TryAddSuggestion(suggestions, seenSuggestions, candidate);
-                }
-            }
+            suggestions.Clear();
+            listedPairs.Reverse();
+            suggestions.AddRange(listedPairs.Take(10));
+            return true;
         }
 
-        for (int i = 1; i < word.Length && suggestions.Count < 10; i++)
+        foreach (var pair in splitPairs)
         {
-            var left = word.Substring(0, i);
-            var right = word.Substring(i);
-
-            var leftCand = GetSingleWordCandidates(left, 12).ToList();
-            var rightCand = GetSingleWordCandidates(right, 12).ToList();
-
-            if (!leftCand.Contains(left)) leftCand.Insert(0, left);
-            if (!rightCand.Contains(right)) rightCand.Insert(0, right);
-
-            foreach (var lc in leftCand)
-            {
-                if (suggestions.Count >= 10) break;
-                foreach (var rc in rightCand)
-                {
-                    if (suggestions.Count >= 10) break;
-
-                    if (string.IsNullOrEmpty(lc) || string.IsNullOrEmpty(rc)) continue;
-                    var phrase = lc + " " + rc;
-                    if (_hashManager.Lookup(lc) && _hashManager.Lookup(rc))
-                    {
-                        TryAddSuggestion(suggestions, seenSuggestions, phrase);
-                        if (suggestions.Count >= 10) break;
-                    }
-
-                    var concat = lc + rc;
-                    if (_hashManager.Lookup(concat))
-                    {
-                        TryAddSuggestion(suggestions, seenSuggestions, concat);
-                        if (suggestions.Count >= 10) break;
-                    }
-                }
-            }
-
-            if (suggestions.Count < 10 && _hashManager.Lookup(left))
-            {
-                if (right.Length <= 4 || right.EndsWith("s", StringComparison.OrdinalIgnoreCase) || right.Contains('"'))
-                {
-                    TryAddSuggestion(suggestions, seenSuggestions, left);
-                }
-            }
-
-            if (suggestions.Count < 10 && _hashManager.WordCount <= 5_000)
-            {
-                foreach (var w in _hashManager.GetAllWords())
-                {
-                    if (suggestions.Count >= 10) break;
-                    if (string.IsNullOrEmpty(w)) continue;
-                    if (w.EndsWith(right, StringComparison.OrdinalIgnoreCase))
-                    {
-                        TryAddSuggestion(suggestions, seenSuggestions, w);
-                    }
-                }
-            }
-
-            if (suggestions.Count < 10 && _hashManager.Lookup(left))
-            {
-                var normalizedRight = right;
-                foreach (var (from, to) in _affixManager.RepTable)
-                {
-                    if (string.IsNullOrEmpty(from)) continue;
-                    normalizedRight = Regex.Replace(normalizedRight, Regex.Escape(from), to, RegexOptions.IgnoreCase);
-                }
-
-                if (!string.Equals(normalizedRight, right, StringComparison.OrdinalIgnoreCase)
-                    && _hashManager.Lookup(normalizedRight)
-                    && _hashManager.Lookup("e"))
-                {
-                    TryAddSuggestion(suggestions, seenSuggestions, left + " e " + normalizedRight);
-                }
-            }
+            if (suggestions.Count >= 10) break;
+            TryAddSuggestion(suggestions, seenSuggestions, pair);
         }
+        return false;
     }
 
     private void GeneratePossessiveSuggestions(string word, List<string> suggestions, HashSet<string> seenSuggestions)
@@ -538,7 +422,7 @@ internal sealed class SuggestManager
         if (!word.EndsWith("s", StringComparison.OrdinalIgnoreCase)) return;
 
         var stem = word.Substring(0, word.Length - 1);
-        if (_hashManager.Lookup(stem))
+        if (_affixManager.CanSuggestWord(stem))
         {
             var cand = stem + "'s";
             TryAddSuggestion(suggestions, seenSuggestions, cand);
@@ -549,110 +433,16 @@ internal sealed class SuggestManager
             if (word.EndsWith("es", StringComparison.OrdinalIgnoreCase) && word.Length > 2)
             {
                 var stemEs = word.Substring(0, word.Length - 2);
-                if (_hashManager.Lookup(stemEs))
+                if (_affixManager.CanSuggestWord(stemEs))
                 {
                     var cand2 = stemEs + "'s";
                     TryAddSuggestion(suggestions, seenSuggestions, cand2);
                 }
             }
 
-            if (_hashManager.Lookup(stem))
+            if (_affixManager.CanSuggestWord(stem))
             {
                 TryAddSuggestion(suggestions, seenSuggestions, stem);
-            }
-        }
-    }
-
-    private IEnumerable<string> GetSingleWordCandidates(string part, int cap = 20)
-    {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        if (string.IsNullOrEmpty(part)) yield break;
-
-        if (_hashManager.Lookup(part) && seen.Add(part)) yield return part;
-
-        var tryChars = _affixManager.TryCharacters;
-
-        var normalizedPart = part.Normalize(NormalizationForm.FormC);
-        foreach (var (from, to) in _affixManager.RepTable)
-        {
-            if (string.IsNullOrEmpty(from)) continue;
-            int start = 0;
-            while ((start = normalizedPart.IndexOf(from, start, StringComparison.OrdinalIgnoreCase)) >= 0)
-            {
-                var candidate = normalizedPart.Substring(0, start) + to + normalizedPart.Substring(start + from.Length);
-                if (seen.Add(candidate) && _hashManager.Lookup(candidate))
-                {
-                    yield return candidate;
-                    if (seen.Count >= cap) yield break;
-                }
-                start += 1;
-            }
-        }
-
-        for (int i = 0; i < part.Length; i++)
-        {
-            foreach (var c in tryChars)
-            {
-                if (c == part[i]) continue;
-                var cand = string.Create(part.Length, (part, i, c), static (span, state) =>
-                {
-                    state.part.AsSpan().CopyTo(span);
-                    span[state.i] = state.c;
-                });
-                if (seen.Add(cand) && _hashManager.Lookup(cand))
-                {
-                    yield return cand;
-                    if (seen.Count >= cap) yield break;
-                }
-            }
-        }
-
-        for (int i = 0; i < part.Length; i++)
-        {
-            var cand = part.Remove(i, 1);
-            if (seen.Add(cand) && _hashManager.Lookup(cand))
-            {
-                yield return cand;
-                if (seen.Count >= cap) yield break;
-            }
-        }
-
-        for (int i = 0; i <= part.Length; i++)
-        {
-            foreach (var c in tryChars)
-            {
-                var cand = part.Insert(i, c.ToString());
-                if (seen.Add(cand) && _hashManager.Lookup(cand))
-                {
-                    yield return cand;
-                    if (seen.Count >= cap) yield break;
-                }
-            }
-        }
-
-        // Brute-force fallback: scan the dictionary for close matches by edit
-        // distance. This is bounded by dictionary size and a hard scan cap to
-        // avoid pathological hangs for very large dictionaries (e.g., the
-        // 150k-word Swedish sv_FI list), where this fallback is invoked many
-        // times per call (twice per split position in GenerateSplitSuggestions).
-        if (seen.Count < cap && _hashManager.WordCount <= 20_000)
-        {
-            const int MaxScan = 2_000;
-            int maxDist = part.Length <= 3 ? 3 : 2;
-            int scanned = 0;
-            foreach (var w in _hashManager.GetAllWords())
-            {
-                if (seen.Count >= cap || scanned >= MaxScan) break;
-                scanned++;
-                if (seen.Contains(w)) continue;
-                int d = BoundedLevenshtein(part, w, maxDist);
-
-                if (d >= 0)
-                {
-                    seen.Add(w);
-                    yield return w;
-                }
             }
         }
     }

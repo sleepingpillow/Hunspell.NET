@@ -77,8 +77,9 @@ internal sealed class AffixManager : IDisposable
     // Suggestion state exposed for SuggestManager
     internal string TryCharacters => _options.TryGetValue("TRY", out var chars) ? chars : DefaultTryCharacters;
     internal List<(string from, string to)> RepTable => _repTable;
-    internal List<(string from, string to)> IconvTable => _iconvTable;
     internal bool NoSplitSuggestions => _noSplitSuggestions;
+    internal bool SuggestHyphenatedSplits =>
+        _options.TryGetValue("TRY", out var chars) && chars.AsSpan().IndexOfAny('-', 'a') >= 0;
     internal bool FullStrip => _fullStrip;
     internal bool OnlyMaxDiff => _onlyMaxDiff;
     internal int MaxDiff => _maxDiff;
@@ -94,13 +95,16 @@ internal sealed class AffixManager : IDisposable
     private readonly List<CompoundPattern> _compoundPatterns = new();
 
     // Break points (BREAK)
+    internal const int MaxBreakDepth = 10;
     private readonly List<string> _breakPoints = new();
+    private bool _hasBreakDirective;
+    internal bool HasBreakPoints => _breakPoints.Count > 0;
 
     // REP table (replacement patterns)
     private readonly List<(string from, string to)> _repTable = new();
     // ICONV / OCONV tables (input/output conversion rules)
-    private readonly List<(string from, string to)> _iconvTable = new();
-    private readonly List<(string from, string to)> _oconvTable = new();
+    private readonly ConversionTable _iconvTable = new();
+    private readonly ConversionTable _oconvTable = new();
     // Cache used by COMPOUNDRULE matching helpers to avoid repeated
     private readonly Dictionary<AffixBaseCacheKey, AffixBaseCacheValue> _affixBaseCache = new();
     // expensive lookups (VariantContainsFlagAfterAppend / TryFindAffixBase)
@@ -330,6 +334,8 @@ internal sealed class AffixManager : IDisposable
         _hashManager = hashManager ?? throw new ArgumentNullException(nameof(hashManager));
 
         LoadAffix(affixPath, preloadedContent);
+        if (!_hasBreakDirective)
+            _breakPoints.AddRange(["-", "^-", "-$"]);
 
         _suggestManager = new SuggestManager(_hashManager, this);
     }
@@ -824,14 +830,15 @@ internal sealed class AffixManager : IDisposable
             case "BREAK":
                 if (parts.Length > 1)
                 {
-                    // First line contains the count, subsequent lines contain break strings
-                    if (int.TryParse(parts[1], out _))
+                    // An explicit table, including BREAK 0, replaces the defaults.
+                    if (!_hasBreakDirective)
                     {
-                        // This is the count line, ignore it
+                        _hasBreakDirective = true;
+                        if (!int.TryParse(parts[1], out _))
+                            _breakPoints.Add(parts[1]);
                     }
                     else
                     {
-                        // This is a break string
                         _breakPoints.Add(parts[1]);
                     }
                 }
@@ -866,41 +873,18 @@ internal sealed class AffixManager : IDisposable
                         // This is a replacement pattern: REP from to
                         // Normalize REP tokens to NFC to match dictionary normalization
                         var fromToken = parts[1]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
-                        var toToken = parts[2]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
+                        var toToken = parts[2].Replace('_', ' ').Normalize();
                         _repTable.Add((fromToken, toToken));
                     }
                 }
                 break;
 
             case "ICONV":
-                if (parts.Length > 1)
-                {
-                    if (int.TryParse(parts[1], out _))
-                    {
-                        // count line - ignore
-                    }
-                    else if (parts.Length >= 3)
-                    {
-                        var from = parts[1]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
-                        var to = parts[2]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
-                        _iconvTable.Add((from, to));
-                    }
-                }
-                break;
-
             case "OCONV":
-                if (parts.Length > 1)
+                if (parts.Length >= 3)
                 {
-                    if (int.TryParse(parts[1], out _))
-                    {
-                        // count line - ignore
-                    }
-                    else if (parts.Length >= 3)
-                    {
-                        var from = parts[1]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
-                        var to = parts[2]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
-                        _oconvTable.Add((from, to));
-                    }
+                    var table = command == "ICONV" ? _iconvTable : _oconvTable;
+                    table.Add(parts[1].Normalize(), parts[2].Normalize());
                 }
                 break;
 
@@ -1085,17 +1069,41 @@ internal sealed class AffixManager : IDisposable
         _suggestManager.GenerateSuggestions(word, suggestions);
     }
 
-    /// <summary>
-    /// Produce candidate words by applying ICONV input conversion rules.
-    /// This generates a bounded set of variants by applying each mapping
-    /// either globally or at individual occurrences. It is intentionally
-    /// conservative to avoid explosion while still catching the common
-    /// patterns used by upstream tests.
-    /// </summary>
-    public IEnumerable<string> GenerateIconvCandidates(string word)
+    internal string ConvertInput(string word) => _iconvTable.Apply(word);
+
+    internal string? ForbiddenWordFlag => _forbiddenWordFlag;
+
+    internal void InvalidateDictionaryCaches()
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        return _suggestManager.GenerateIconvCandidates(word);
+        _affixBaseCache.Clear();
+        _compoundTokenMatchCache.Clear();
+        _twoWordSimpleCache.Clear();
+    }
+
+    internal string ConvertOutput(string word) => _oconvTable.Apply(word);
+
+    internal bool CanSuggestWord(string word, bool allowAffixes = false)
+    {
+        if (word.Length == 0 || _hashManager.IsRuntimeRemoved(word)) return false;
+
+        if (_hashManager.LookupWithCaseRules(word, KeepCaseFlag))
+        {
+            return _hashManager.GetWordFlagVariants(word).Any(flags =>
+                !VariantHasFlag(flags, _noSuggestFlag) &&
+                !VariantHasFlag(flags, _forbiddenWordFlag) &&
+                !VariantHasFlag(flags, _onlyInCompound) &&
+                !VariantHasFlag(flags, _needAffixFlag));
+        }
+
+        if (!allowAffixes ||
+            !TryFindAffixBase(word, allowBaseOnlyInCompound: false, out var root, out _, out var appended, out _, out _) ||
+            root is null ||
+            IsAffixDerivedFormForbiddenByCompound(word) || IsAffixDerivedOnlyInCompound(word) || IsForbiddenWord(word))
+            return false;
+
+        if (VariantHasFlag(appended, _noSuggestFlag)) return false;
+        return _noSuggestFlag is null ||
+            _hashManager.GetWordFlagVariants(root).Any(flags => !VariantHasFlag(flags, _noSuggestFlag));
     }
 
     // Generate candidates that are two edits away (perform another single-edit
@@ -1724,6 +1732,7 @@ internal sealed class AffixManager : IDisposable
     public bool CheckCompound(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_hashManager.IsRuntimeRemoved(word)) return false;
         // If the dictionary contains a 'ph:' field mapping that names this
         // compound form (e.g., "forbiddenroot"), upstream Hunspell treats
         // that collapsed form as a misspelling for the multi-word entry and
@@ -3943,6 +3952,7 @@ internal sealed class AffixManager : IDisposable
     public bool IsForbiddenWord(string word)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_hashManager.IsRuntimeRemoved(word)) return true;
 
         if (_forbiddenWordFlag is null) return false;
 
@@ -3951,7 +3961,7 @@ internal sealed class AffixManager : IDisposable
         var variants = _hashManager.GetWordFlagVariants(word).ToList();
         if (variants.Count > 0)
         {
-            if (variants.Any(v => string.IsNullOrEmpty(v) || !v.Contains(_forbiddenWordFlag)))
+            if (variants.Any(v => !VariantHasFlag(v, _forbiddenWordFlag)))
             {
                 return false;
             }
@@ -4139,6 +4149,12 @@ internal sealed class AffixManager : IDisposable
 
     private bool TryFindAffixBase(string word, bool allowBaseOnlyInCompound, out string? baseCandidate, out AffixMatchKind kind, out string? appendedFlag, out int affixCount, out int cleanAffixCount, IReadOnlyList<string>? requiredCompoundFlags = null, int depth = 0, bool skipPartialCircumfix = false)
     {
+        if (_hashManager.IsRuntimeRemoved(word))
+        {
+            (baseCandidate, kind, appendedFlag, affixCount, cleanAffixCount) = (null, default, null, 0, 0);
+            return false;
+        }
+
         var requiredFlagsKey = requiredCompoundFlags is null ? "<none>" : string.Join('|', requiredCompoundFlags);
         var cacheKey = new AffixBaseCacheKey(word, allowBaseOnlyInCompound, requiredFlagsKey, depth, skipPartialCircumfix);
 
@@ -5158,62 +5174,56 @@ internal sealed class AffixManager : IDisposable
         return null;
     }
 
-    /// <summary>
-    /// Check if a word can be broken at break points with all parts being valid.
-    /// </summary>
-    public bool CheckBreak(string word)
+    internal bool CheckBreak(string word, Func<string, bool> checkPart)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        // If no break points defined, no break checking
-        if (_breakPoints.Count == 0)
+        int occurrenceCount = 0;
+        foreach (var pattern in _breakPoints)
         {
-            return false;
-        }
-
-        // Try to break the word at each break point
-        return CheckBreakRecursive(word);
-    }
-
-    /// <summary>
-    /// Recursively check if a word can be broken into valid parts.
-    /// </summary>
-    private bool CheckBreakRecursive(string word)
-    {
-        // Empty word is not valid
-        if (string.IsNullOrEmpty(word))
-        {
-            return false;
-        }
-
-        // Check if the whole word is valid
-        if (_hashManager.Lookup(word) && !IsOnlyInCompound(word))
-        {
-            return true;
-        }
-        foreach (var breakPoint in _breakPoints)
-        {
-            // Find all occurrences of the break point
             int index = 0;
-            while ((index = word.IndexOf(breakPoint, index)) >= 0)
+            while ((index = word.IndexOf(pattern, index, StringComparison.Ordinal)) >= 0)
             {
-                if (index > 0 && index < word.Length - breakPoint.Length)
-                {
-                    // Break the word into parts
-                    var before = word.Substring(0, index);
-                    var after = word.Substring(index + breakPoint.Length);
-
-                    // Both parts must be valid (recursively)
-                    if (CheckBreakRecursive(before) && CheckBreakRecursive(after))
-                    {
-                        return true;
-                    }
-                }
-                index++; // Move to next position
+                if (++occurrenceCount >= MaxBreakDepth) return false;
+                index += pattern.Length;
             }
         }
 
+        foreach (var pattern in _breakPoints)
+        {
+            if (pattern.Length <= 1 || pattern.Length > word.Length) continue;
+
+            if (pattern[0] == '^' && word.AsSpan().StartsWith(pattern.AsSpan(1), StringComparison.Ordinal) &&
+                checkPart(word[(pattern.Length - 1)..]))
+                return true;
+
+            if (pattern[^1] == '$' && word.AsSpan().EndsWith(pattern.AsSpan(0, pattern.Length - 1), StringComparison.Ordinal) &&
+                checkPart(word[..^(pattern.Length - 1)]))
+                return true;
+        }
+
+        // Hunspell tries the second internal occurrence before retrying the first.
+        // This can preserve a dictionary entry beginning or ending with the separator.
+        foreach (var pattern in _breakPoints)
+        {
+            int first = word.IndexOf(pattern, StringComparison.Ordinal);
+            if (first <= 0 || first + pattern.Length >= word.Length) continue;
+            int second = word.IndexOf(pattern, first + 1, StringComparison.Ordinal);
+            if (second >= 0 && second + pattern.Length < word.Length && CheckAt(pattern, second))
+                return true;
+        }
+
+        foreach (var pattern in _breakPoints)
+        {
+            int first = word.IndexOf(pattern, StringComparison.Ordinal);
+            if (first > 0 && first + pattern.Length < word.Length && CheckAt(pattern, first))
+                return true;
+        }
+
         return false;
+
+        bool CheckAt(string pattern, int index) =>
+            checkPart(word[(index + pattern.Length)..]) && checkPart(word[..index]);
     }
 
     /// <summary>
