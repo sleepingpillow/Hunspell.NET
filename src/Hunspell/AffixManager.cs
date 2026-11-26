@@ -3951,7 +3951,7 @@ internal sealed class AffixManager : IDisposable
         var variants = _hashManager.GetWordFlagVariants(word).ToList();
         if (variants.Count > 0)
         {
-            if (variants.Any(v => string.IsNullOrEmpty(v) || !v.Contains(_forbiddenWordFlag)))
+            if (variants.Any(v => !VariantHasFlag(v, _forbiddenWordFlag)))
             {
                 return false;
             }

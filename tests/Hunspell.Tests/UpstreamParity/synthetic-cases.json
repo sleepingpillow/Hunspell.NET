@@ -70,5 +70,37 @@
     "Operation": "spell",
     "Input": "and/ors",
     "Expected": true
+  },
+  {
+    "Id": "synthetic/keepcase-capitalized-variant",
+    "Affix": "SET UTF-8\nKEEPCASE K\n",
+    "Dictionary": "1\nLondon/K\n",
+    "Operation": "spell",
+    "Input": "LONDON",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/keepcase-lowercase-variant",
+    "Affix": "SET UTF-8\nKEEPCASE K\n",
+    "Dictionary": "1\nLondon/K\n",
+    "Operation": "spell",
+    "Input": "london",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/numeric-flag-forbidden",
+    "Affix": "SET UTF-8\nFLAG num\nFORBIDDENWORD 1\n",
+    "Dictionary": "2\nword/10\nstop/1\n",
+    "Operation": "spell",
+    "Input": "stop",
+    "Expected": false
+  },
+  {
+    "Id": "synthetic/long-flag-token-boundary",
+    "Affix": "SET UTF-8\nFLAG long\nFORBIDDENWORD BC\n",
+    "Dictionary": "1\nword/ABCD\n",
+    "Operation": "spell",
+    "Input": "word",
+    "Expected": true
   }
 ]

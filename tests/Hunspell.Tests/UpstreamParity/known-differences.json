@@ -4,10 +4,14 @@
   "upstream/breakdefault/good/6": false,
   "upstream/breakdefault/good/7": false,
   "synthetic/wordchars": true,
-  "synthetic/keepcase": false,
-  "synthetic/numeric-flag": false,
   "synthetic/iconv-order": true,
-  "synthetic/nosuggest": ["work", "work work"],
-  "synthetic/oconv": ["work", "work work"],
+  "synthetic/nosuggest": [
+    "work",
+    "work work"
+  ],
+  "synthetic/oconv": [
+    "work",
+    "work work"
+  ],
   "synthetic/remove-base-word": true
 }
