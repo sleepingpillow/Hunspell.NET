@@ -49,3 +49,25 @@ jobs:
       with:
         name: nuget-packages
         path: ./artifacts/*.nupkg
+
+  verify-reference:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v4
+    - name: Check out pinned Hunspell reference
+      uses: actions/checkout@v4
+      with:
+        repository: hunspell/hunspell
+        ref: 15faca15532b34db3106d50f162e5edc2503d6d6 # v1.7.6
+        path: upstream-reference
+    - name: Build the reference library
+      run: >-
+        g++ -std=c++14 -O2 -fPIC -DBUILDING_LIBHUNSPELL -shared
+        upstream-reference/src/hunspell/*.cxx
+        -o "$RUNNER_TEMP/libhunspell-reference.so"
+    - name: Verify pinned parity expectations
+      run: >-
+        python3 tests/Hunspell.Tests/UpstreamParity/verify_reference.py
+        --library "$RUNNER_TEMP/libhunspell-reference.so"
