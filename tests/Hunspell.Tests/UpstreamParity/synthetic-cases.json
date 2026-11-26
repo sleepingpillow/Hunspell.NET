@@ -62,5 +62,13 @@
     "Operation": "remove",
     "Input": "word",
     "Expected": false
+  },
+  {
+    "Id": "synthetic/escaped-slash-with-affix",
+    "Affix": "SET UTF-8\nSFX S Y 1\nSFX S 0 s .\n",
+    "Dictionary": "1\nand\\/or/S po:noun\n",
+    "Operation": "spell",
+    "Input": "and/ors",
+    "Expected": true
   }
 ]

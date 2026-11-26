@@ -147,61 +147,49 @@ internal sealed class HashManager : IDisposable
         }
     }
 
-        private void ProcessDictionaryLine(string line)
+    private void ProcessDictionaryLine(string line)
     {
         if (string.IsNullOrWhiteSpace(line) || line.StartsWith('#'))
         {
             return;
         }
 
-            // Dictionary lines can contain additional morphological fields
-            // separated by tabs or spaces (e.g. `foo ph:bar`) and surface forms
-            // themselves may include spaces (multi-word entries). The canonical
-            // format is: <surface>[/flags][\t<morph-fields>...].
-            //
-            // Robust parsing strategy:
-            // - Split into tokens on whitespace.
-            // - Treat all leading tokens up to the first token that contains ':'
-            //   (a morphological key like "ph:") as part of the surface + flags
-            //   token(s). This preserves multi-word surfaces that precede morph
-            //   fields.
-            // - Join those leading tokens back into a single string and then
-            //   split it on '/' to extract surface and flag string (if any).
-
-            var trimmed = line.Trim();
-            // Split on whitespace to find morphological fields (tokens like ph:..)
-            // Split on whitespace. Use the null-forgiving operator because passing
-            // a literal null here is the canonical way to request splitting on
-            // whitespace; avoid CS8600 by telling the compiler we know this is OK.
-            var tokens = trimmed.Split((char[])null!, StringSplitOptions.RemoveEmptyEntries);
-            if (tokens.Length == 0) return;
-
-            int morphIndex = Array.FindIndex(tokens, t => t.Contains(':'));
-            string mainToken;
-            if (morphIndex <= 0)
+        var entry = line.AsSpan().Trim();
+        int morphStart = entry.IndexOf('\t');
+        for (int i = 1; i + 2 < entry.Length && (morphStart < 0 || i < morphStart); i++)
+        {
+            if (entry[i - 1] == ' ' && entry[i] != ' ' &&
+                entry[i + 1] != ' ' && entry[i + 2] == ':')
             {
-                // No morph fields or the first token itself contains ':', keep whole line
-                mainToken = tokens[0];
-                // If multiple tokens and none contains ':', assume whole first token is the entry
-                // (this covers the common case like "word/FLAGS")
+                morphStart = i;
+                break;
             }
-            else
-            {
-                // Join all tokens up to (but excluding) the first morphological token
-                mainToken = string.Join(' ', tokens.Take(morphIndex));
-            }
+        }
 
-            var parts = mainToken.Split('/', 2, StringSplitOptions.TrimEntries);
-            var word = parts[0]?.Normalize(System.Text.NormalizationForm.FormC) ?? string.Empty;
-            var flags = parts.Length > 1 ? parts[1] : string.Empty;
+        var tokens = morphStart < 0
+            ? Array.Empty<string>()
+            : entry[morphStart..].ToString().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        var wordAndFlags = (morphStart < 0 ? entry : entry[..morphStart]).TrimEnd();
+
+        int separator = 0;
+        for (; separator < wordAndFlags.Length; separator++)
+        {
+            if (wordAndFlags[separator] == '/' && separator > 0 && wordAndFlags[separator - 1] != '\\')
+                break;
+        }
+
+        var word = wordAndFlags[..separator].TrimEnd().ToString()
+            .Replace(@"\/", "/", StringComparison.Ordinal)
+            .Normalize(NormalizationForm.FormC);
+        var flags = separator < wordAndFlags.Length ? wordAndFlags[(separator + 1)..].Trim().ToString() : string.Empty;
 
         if (!string.IsNullOrEmpty(word))
         {
-            // Collect morphological data (all tokens after morphIndex that aren't ph:)
+            // Store ph: separately for use during suggestion generation.
             var morphData = string.Empty;
-            if (morphIndex > 0 && morphIndex < tokens.Length)
+            if (tokens.Length > 0)
             {
-                var morphTokens = tokens.Skip(morphIndex).Where(t => !t.StartsWith("ph:", StringComparison.OrdinalIgnoreCase));
+                var morphTokens = tokens.Where(t => !t.StartsWith("ph:", StringComparison.OrdinalIgnoreCase));
                 morphData = string.Join("\t", morphTokens);
             }
             
@@ -214,9 +202,9 @@ internal sealed class HashManager : IDisposable
             // If there are morphological tokens after the main token, extract
             // any ph: entries and index them so higher-level logic (e.g., the
             // affix/compound checker) can consult them.
-            if (tokens.Length > 1 && Array.FindIndex(tokens, t => t.Contains(':')) is var idx && idx >= 0)
+            if (tokens.Length > 0)
             {
-                for (int j = idx; j < tokens.Length; j++)
+                for (int j = 0; j < tokens.Length; j++)
                 {
                     var tok = tokens[j];
                     if (tok.StartsWith("ph:", StringComparison.OrdinalIgnoreCase))
